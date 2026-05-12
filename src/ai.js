@@ -12,7 +12,7 @@ async function processMessage(customerPhone, messageText, restaurantPhoneId) {
   history.push({ role: 'user', content: messageText });
 
   const response = await client.messages.create({
-    model: 'claude-sonnet-4-20250514',
+    model: 'claude-haiku-4-5-20251001',
     max_tokens: 1024,
     system: `Eres el asistente de reservas de un restaurante. Ayudas a los clientes a:
 1. Hacer reservas (preguntas fecha, personas, y muestras disponibilidad)
