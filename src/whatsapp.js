@@ -15,7 +15,6 @@ async function handleWhatsAppMessage(req, res) {
 
     const reply = await processMessage(from, text, 'twilio');
 
-    // Responder con TwiML (formato que espera Twilio)
     const twiml = reply
       ? `<?xml version="1.0" encoding="UTF-8"?><Response><Message>${reply}</Message></Response>`
       : `<?xml version="1.0" encoding="UTF-8"?><Response></Response>`;
@@ -24,9 +23,9 @@ async function handleWhatsAppMessage(req, res) {
     res.end(twiml);
 
   } catch (err) {
-    console.error('Error:', err);
+    console.error('Error completo:', err.message, err.stack);
     res.writeHead(200, { 'Content-Type': 'text/xml' });
-    res.end(`<?xml version="1.0" encoding="UTF-8"?><Response></Response>`);
+    res.end(`<?xml version="1.0" encoding="UTF-8"?><Response><Message>Error: ${err.message}</Message></Response>`);
   }
 }
 
