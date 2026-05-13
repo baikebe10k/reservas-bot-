@@ -20,7 +20,7 @@ async function getAvailability(restaurantId, date, guests) {
     .eq('restaurant_id', restaurantId)
     .eq('date', date)
     .neq('status', 'cancelled');
-
+    if (!tables || !existing) return [];
   const hours = ['13:00','13:30','14:00','14:30','21:00','21:30','22:00'];
   const available = [];
 
