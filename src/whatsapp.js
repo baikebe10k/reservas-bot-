@@ -8,24 +8,22 @@ async function handleWhatsAppMessage(req, res) {
     const text = req.body.Body;
 
     if (!from || !text) {
-      res.writeHead(200);
-      res.end();
+      res.writeHead(200, { 'Content-Type': 'text/xml' });
+      res.end('<?xml version="1.0" encoding="UTF-8"?><Response></Response>');
       return;
     }
 
+    // Responder a Twilio inmediatamente
+    res.writeHead(200, { 'Content-Type': 'text/xml' });
+    res.end('<?xml version="1.0" encoding="UTF-8"?><Response></Response>');
+
+    // Procesar y enviar respuesta por separado
     const reply = await processMessage(from, text, 'twilio');
     console.log('reply:', reply);
-    const twiml = reply
-      ? `<?xml version="1.0" encoding="UTF-8"?><Response><Message>${reply}</Message></Response>`
-      : `<?xml version="1.0" encoding="UTF-8"?><Response></Response>`;
-
-    res.writeHead(200, { 'Content-Type': 'text/xml' });
-    res.end(twiml);
+    if (reply) await sendMessage(from, reply);
 
   } catch (err) {
     console.error('Error completo:', err.message, err.stack);
-    res.writeHead(200, { 'Content-Type': 'text/xml' });
-    res.end(`<?xml version="1.0" encoding="UTF-8"?><Response><Message>Error: ${err.message}</Message></Response>`);
   }
 }
 
