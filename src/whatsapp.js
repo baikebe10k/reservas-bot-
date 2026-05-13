@@ -14,7 +14,7 @@ async function handleWhatsAppMessage(req, res) {
     }
 
     const reply = await processMessage(from, text, 'twilio');
-
+    console.log('reply:', reply);
     const twiml = reply
       ? `<?xml version="1.0" encoding="UTF-8"?><Response><Message>${reply}</Message></Response>`
       : `<?xml version="1.0" encoding="UTF-8"?><Response></Response>`;
