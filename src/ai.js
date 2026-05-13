@@ -6,7 +6,10 @@ const client = new Anthropic();
 const conversations = new Map();
 
 async function processMessage(customerPhone, messageText, restaurantPhoneId) {
-  const history = conversations.get(customerPhone) || [];
+    let history = conversations.get(customerPhone) || [];
+    if (history.some(m => Array.isArray(m.content) && m.content.some(b => b.type === 'tool_result'))) {
+      history = [];
+    }
   const restaurantId = await getRestaurantId(restaurantPhoneId);
 
   history.push({ role: 'user', content: messageText });
