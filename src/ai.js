@@ -6,12 +6,12 @@ const client = new Anthropic();
 const conversations = new Map();
 
 async function processMessage(customerPhone, messageText, restaurantPhoneId) {
-    let history = conversations.get(customerPhone) || [];
-    if (history.some(m => Array.isArray(m.content) && m.content.some(b => b.type === 'tool_result'))) {
-      history = [];
-    }
-  const restaurantId = await getRestaurantId(restaurantPhoneId);
+  let history = conversations.get(customerPhone) || [];
+  if (history.some(m => Array.isArray(m.content) && m.content.some(b => b.type === 'tool_result'))) {
+    history = [];
+  }
 
+  const restaurantId = await getRestaurantId(restaurantPhoneId);
   history.push({ role: 'user', content: messageText });
 
   const systemPrompt = `Eres el asistente de reservas de un restaurante. Ayudas a los clientes a:
@@ -77,7 +77,6 @@ Nunca inventes disponibilidad, siempre consulta la base de datos.`;
 
   while (response.stop_reason === 'tool_use') {
     const toolUseBlocks = response.content.filter(b => b.type === 'tool_use');
-    
     history.push({ role: 'assistant', content: response.content });
 
     const toolResults = [];
@@ -86,12 +85,14 @@ Nunca inventes disponibilidad, siempre consulta la base de datos.`;
       if (block.name === 'getAvailability') {
         toolResult = await getAvailability(restaurantId, block.input.date, block.input.guests);
       } else if (block.name === 'createReservation') {
+        console.log('createReservation input:', JSON.stringify(block.input));
         toolResult = await createReservation({
           ...block.input,
           table_id: block.input.tableId,
           customer_phone: customerPhone,
           restaurant_id: restaurantId
         });
+        console.log('createReservation result:', JSON.stringify(toolResult));
       } else if (block.name === 'cancelReservation') {
         toolResult = await cancelByPhone(customerPhone, restaurantId);
       }
