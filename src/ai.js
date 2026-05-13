@@ -6,10 +6,7 @@ const client = new Anthropic();
 const conversations = new Map();
 
 async function processMessage(customerPhone, messageText, restaurantPhoneId) {
-    let history = conversations.get(customerPhone) || [];
-    if (history.some(m => Array.isArray(m.content) && m.content.some(b => b.type === 'tool_result'))) {
-      history = [];
-    }
+  const history = conversations.get(customerPhone) || [];
   const restaurantId = await getRestaurantId(restaurantPhoneId);
 
   history.push({ role: 'user', content: messageText });
@@ -21,7 +18,7 @@ async function processMessage(customerPhone, messageText, restaurantPhoneId) {
 Hoy es ${new Date().toLocaleDateString('es-ES')}.
 El ID del restaurante es: ${restaurantId}
 
-IMPORTANTE: Detecta el idioma del cliente y responde SIEMPRE en ese idioma (español, inglés, francés, alemán, etc).
+IMPORTANTE: Detecta el idioma del cliente y responde SIEMPRE en ese idioma.
 Sé amable y conciso.
 Si el cliente da una fecha, extráela en formato YYYY-MM-DD.
 Nunca inventes disponibilidad, siempre consulta la base de datos.`;
@@ -59,9 +56,7 @@ Nunca inventes disponibilidad, siempre consulta la base de datos.`;
       description: 'Cancela la reserva del cliente',
       input_schema: {
         type: 'object',
-        properties: {
-          phone: { type: 'string' }
-        },
+        properties: { phone: { type: 'string' } },
         required: ['phone']
       }
     }
@@ -77,7 +72,6 @@ Nunca inventes disponibilidad, siempre consulta la base de datos.`;
 
   while (response.stop_reason === 'tool_use') {
     const toolUseBlocks = response.content.filter(b => b.type === 'tool_use');
-    
     history.push({ role: 'assistant', content: response.content });
 
     const toolResults = [];
@@ -115,7 +109,7 @@ Nunca inventes disponibilidad, siempre consulta la base de datos.`;
 
   const finalText = response.content.find(b => b.type === 'text')?.text || '';
   history.push({ role: 'assistant', content: finalText });
-  conversations.set(customerPhone, history.slice(-20));
+  conversations.set(customerPhone, history.slice(-10));
 
   return finalText;
 }
