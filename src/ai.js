@@ -107,7 +107,7 @@ Nunca inventes disponibilidad, siempre consulta la base de datos.`,
 }
 
 async function getRestaurantId(phoneId) {
-  return 'tu-restaurant-id';
+    return '00000000-0000-0000-0000-000000000001';
 }
 
 module.exports = { processMessage };
