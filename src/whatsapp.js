@@ -1,4 +1,3 @@
-const axios = require('axios');
 const { processMessage } = require('./ai');
 require('dotenv').config();
 
@@ -13,28 +12,24 @@ async function handleWhatsAppMessage(req, res) {
       return;
     }
 
-    // Responder a Twilio inmediatamente
-    res.writeHead(200, { 'Content-Type': 'text/xml' });
-    res.end('<?xml version="1.0" encoding="UTF-8"?><Response></Response>');
+    const reply = await Promise.race([
+      processMessage(from, text, 'twilio'),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 9000))
+    ]);
 
-    // Procesar y enviar respuesta por separado
-    const reply = await processMessage(from, text, 'twilio');
-    console.log('reply:', reply);
-    if (reply) await sendMessage(from, reply);
+    const twiml = reply
+      ? `<?xml version="1.0" encoding="UTF-8"?><Response><Message>${reply}</Message></Response>`
+      : `<?xml version="1.0" encoding="UTF-8"?><Response></Response>`;
+
+    res.writeHead(200, { 'Content-Type': 'text/xml' });
+    res.end(twiml);
 
   } catch (err) {
-    console.error('Error completo:', err.message, err.stack);
+    console.error('Error:', err.message);
+    const msg = err.message === 'timeout' ? 'Lo siento, tardé demasiado. Por favor inténtalo de nuevo.' : err.message;
+    res.writeHead(200, { 'Content-Type': 'text/xml' });
+    res.end(`<?xml version="1.0" encoding="UTF-8"?><Response><Message>${msg}</Message></Response>`);
   }
 }
 
-async function sendMessage(to, text) {
-  const accountSid = process.env.TWILIO_ACCOUNT_SID;
-  const authToken = process.env.TWILIO_AUTH_TOKEN;
-  await axios.post(
-    `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`,
-    new URLSearchParams({ From: 'whatsapp:+14155238886', To: `whatsapp:${to}`, Body: text }),
-    { auth: { username: accountSid, password: authToken } }
-  );
-}
-
-module.exports = { handleWhatsAppMessage, sendMessage };
+module.exports = { handleWhatsAppMessage };
