@@ -8,8 +8,8 @@ async function handleWhatsAppMessage(req, res) {
     const text = req.body.Body;
 
     if (!from || !text) {
-      res.writeHead(200);
-      res.end();
+      res.writeHead(200, { 'Content-Type': 'text/xml' });
+      res.end('<?xml version="1.0" encoding="UTF-8"?><Response></Response>');
       return;
     }
 
@@ -23,20 +23,10 @@ async function handleWhatsAppMessage(req, res) {
     res.end(twiml);
 
   } catch (err) {
-    console.error('Error completo:', err.message, err.stack);
+    console.error('Error:', err.message);
     res.writeHead(200, { 'Content-Type': 'text/xml' });
     res.end(`<?xml version="1.0" encoding="UTF-8"?><Response><Message>Error: ${err.message}</Message></Response>`);
   }
 }
 
-async function sendMessage(to, text) {
-  const accountSid = process.env.TWILIO_ACCOUNT_SID;
-  const authToken = process.env.TWILIO_AUTH_TOKEN;
-  await axios.post(
-    `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`,
-    new URLSearchParams({ From: 'whatsapp:+14155238886', To: `whatsapp:${to}`, Body: text }),
-    { auth: { username: accountSid, password: authToken } }
-  );
-}
-
-module.exports = { handleWhatsAppMessage, sendMessage };
+module.exports = { handleWhatsAppMessage };
