@@ -1,4 +1,3 @@
-cat > src/database.js << 'EOF'
 const { createClient } = require('@supabase/supabase-js');
 
 const supabase = createClient(
@@ -16,7 +15,7 @@ async function getAvailability(restaurantId, date, guests) {
 
   if (!tables || tables.length === 0) return [];
 
-  const slots = ['13:00', '13:30', '14:00', '14:30', '21:00', '21:30', '22:00'];
+  const slots = ['13:00','13:30','14:00','14:30','21:00','21:30','22:00'];
   const available = [];
 
   for (const slot of slots) {
@@ -32,12 +31,11 @@ async function getAvailability(restaurantId, date, guests) {
     const freeTable = tables.find(t => !bookedTableIds.includes(t.id));
     if (freeTable) available.push(slot);
   }
-
   return available;
 }
 
 async function createReservation(restaurantId, data) {
-  console.log('createReservation llamado con:', restaurantId, data);
+  console.log('createReservation:', restaurantId, data);
 
   const { data: tables } = await supabase
     .from('tables')
@@ -46,10 +44,7 @@ async function createReservation(restaurantId, data) {
     .eq('active', true)
     .gte('capacity', data.guests);
 
-  if (!tables || tables.length === 0) {
-    console.log('No hay mesas disponibles');
-    return { error: 'No hay mesas disponibles' };
-  }
+  if (!tables || tables.length === 0) return { error: 'No hay mesas' };
 
   const { data: existing } = await supabase
     .from('reservations')
@@ -62,12 +57,9 @@ async function createReservation(restaurantId, data) {
   const bookedTableIds = (existing || []).map(r => r.table_id);
   const freeTable = tables.find(t => !bookedTableIds.includes(t.id));
 
-  if (!freeTable) {
-    console.log('Mesa no disponible para ese horario');
-    return { error: 'Mesa no disponible para ese horario' };
-  }
+  if (!freeTable) return { error: 'No hay mesa disponible' };
 
-  const startDateTime = new Date(`${data.date}T${data.time}:00`);
+  const startDateTime = new Date(data.date + 'T' + data.time + ':00');
   const endDateTime = new Date(startDateTime.getTime() + 90 * 60 * 1000);
 
   const insertData = {
@@ -82,7 +74,7 @@ async function createReservation(restaurantId, data) {
     status: 'confirmed'
   };
 
-  console.log('Insertando en Supabase:', insertData);
+  console.log('Insertando:', insertData);
 
   const { data: res, error } = await supabase
     .from('reservations')
@@ -95,7 +87,7 @@ async function createReservation(restaurantId, data) {
     return { error: error.message };
   }
 
-  console.log('Reserva guardada:', res);
+  console.log('Guardado:', res);
   return res;
 }
 
@@ -111,5 +103,3 @@ async function cancelByPhone(phone) {
 }
 
 module.exports = { supabase, getAvailability, createReservation, cancelByPhone };
-EOF
-git add . && git commit -m "fix createReservation" && git push
