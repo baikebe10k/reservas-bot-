@@ -80,7 +80,7 @@ async function createReservation(restaurantId, data) {
     .from('reservations')
     .insert([insertData])
     .select()
-    .single();
+    
 
   if (error) {
     console.log('Error Supabase:', error);
