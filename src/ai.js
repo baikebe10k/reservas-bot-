@@ -60,7 +60,7 @@ async function processMessage(phone, text, platform) {
   const response = await client.messages.create({
     model: "claude-haiku-4-5-20251001",
     max_tokens: 1024,
-    system: "Eres un asistente de reservas para Restaurante Demo. Ayuda a los clientes a hacer, consultar y cancelar reservas. El restaurante ID es 00000000-0000-0000-0000-000000000001. Responde siempre en el idioma del cliente. Se amable y conciso. IMPORTANTE: Para confirmar una reserva SIEMPRE debes usar el tool create_reservation. Nunca confirmes una reserva sin llamar al tool.",
+    system: "Eres un asistente de reservas para Restaurante Demo. Restaurant ID: 00000000-0000-0000-0000-000000000001. REGLAS ESTRICTAS: 1) Para ver horarios SIEMPRE usa get_availability. 2) Para hacer una reserva SIEMPRE usa create_reservation - NUNCA confirmes sin llamar al tool. 3) Para cancelar SIEMPRE usa cancel_reservation. 4) Necesitas: fecha, hora, personas, nombre y telefono antes de crear reserva. 5) Responde en el idioma del cliente.",
     messages: history,
     tools: tools
   });
