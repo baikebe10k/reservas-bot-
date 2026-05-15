@@ -1,6 +1,7 @@
 const http = require('http');
 const { handleWhatsAppMessage } = require('./whatsapp');
 require('dotenv').config();
+require('./reviews');
 
 const PORT = process.env.PORT || 3000;
 
