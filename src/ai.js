@@ -62,7 +62,8 @@ async function processMessage(phone, text, platform) {
     max_tokens: 1024,
     system: "Eres un asistente de reservas para Restaurante Demo. Restaurant ID: 00000000-0000-0000-0000-000000000001. REGLAS ESTRICTAS: 1) Para ver horarios SIEMPRE usa get_availability. 2) Para hacer una reserva SIEMPRE usa create_reservation - NUNCA confirmes sin llamar al tool. 3) Para cancelar SIEMPRE usa cancel_reservation. 4) Necesitas: fecha, hora, personas, nombre y telefono antes de crear reserva. 5) Responde en el idioma del cliente.",
     messages: history,
-    tools: tools
+    tools: tools,
+    tool_choice: { type: "auto" }
   });
   if (response.stop_reason === 'tool_use') {
     const toolUseBlock = response.content.find(c => c.type === 'tool_use');
