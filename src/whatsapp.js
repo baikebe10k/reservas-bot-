@@ -18,7 +18,7 @@ async function handleWhatsAppMessage(req, res) {
    console.log('Reply:', reply);
 
    const twiml = reply
-     ? `<?xml version="1.0" encoding="UTF-8"?><Response><Message><![CDATA[${reply}]]></Message></Response>`
+     ? `? `<?xml version="1.0" encoding="UTF-8"?><Response><Message>${reply.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</Message></Response>``
      : `<?xml version="1.0" encoding="UTF-8"?><Response></Response>`;
 
    res.writeHead(200, { 'Content-Type': 'text/xml' });
