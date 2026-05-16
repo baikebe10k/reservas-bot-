@@ -72,11 +72,11 @@ async function processMessage(phone, text, platform) {
 Restaurant ID: 00000000-0000-0000-0000-000000000001.
 Horario: ${openingTime} a ${closingTime}.
 
-REGLAS ABSOLUTAS — NUNCA las ignores:
+REGLAS ABSOLUTAS:
 1. Para ver disponibilidad SIEMPRE llama a get_availability PRIMERO.
-2. Para crear una reserva SIEMPRE llama a create_reservation. PROHIBIDO confirmar una reserva con texto sin haberla creado en la base de datos.
+2. Para crear una reserva SIEMPRE llama a create_reservation. PROHIBIDO confirmar sin llamar al tool.
 3. Para cancelar SIEMPRE llama a cancel_reservation.
-4. Antes de crear una reserva necesitas: fecha, hora, nº personas, nombre completo y teléfono. Si falta alguno, pregúntalo.
+4. Necesitas: fecha, hora, personas, nombre completo y teléfono antes de crear reserva.
 5. Responde SIEMPRE en el idioma del cliente.
 6. Sé amable y conciso.`;
 
@@ -94,13 +94,10 @@ REGLAS ABSOLUTAS — NUNCA las ignores:
 
     if (response.stop_reason === 'tool_use') {
       history.push({ role: "assistant", content: response.content });
-
       const toolResults = [];
       for (const block of response.content) {
         if (block.type !== 'tool_use') continue;
-
         console.log(`[Tool llamado] ${block.name}`, JSON.stringify(block.input));
-
         let result;
         try {
           result = await executeTool(block.name, block.input);
@@ -109,16 +106,9 @@ REGLAS ABSOLUTAS — NUNCA las ignores:
           console.error(`[Tool error] ${block.name}`, e.message);
           result = { error: e.message };
         }
-
-        toolResults.push({
-          type: "tool_result",
-          tool_use_id: block.id,
-          content: JSON.stringify(result)
-        });
+        toolResults.push({ type: "tool_result", tool_use_id: block.id, content: JSON.stringify(result) });
       }
-
       history.push({ role: "user", content: toolResults });
-
     } else {
       const finalText = response.content.find(c => c.type === 'text')?.text || 'Lo siento, hubo un error.';
       history.push({ role: "assistant", content: finalText });
