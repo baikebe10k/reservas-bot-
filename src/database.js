@@ -5,7 +5,36 @@ const supabase = createClient(
   process.env.SUPABASE_KEY
 );
 
+async function getRestaurantConfig(restaurantId) {
+  const { data } = await supabase
+    .from('restaurants')
+    .select('*')
+    .eq('id', restaurantId)
+    .maybeSingle();
+  return data;
+}
+
+function generateSlots(openingTime, closingTime, slotDuration) {
+  const slots = [];
+  const [openH, openM] = openingTime.split(':').map(Number);
+  const [closeH, closeM] = closingTime.split(':').map(Number);
+  let current = openH * 60 + openM;
+  const end = closeH * 60 + closeM;
+  while (current < end) {
+    const h = String(Math.floor(current / 60)).padStart(2, '0');
+    const m = String(current % 60).padStart(2, '0');
+    slots.push(`${h}:${m}`);
+    current += slotDuration;
+  }
+  return slots;
+}
+
 async function getAvailability(restaurantId, date, guests) {
+  const config = await getRestaurantConfig(restaurantId);
+  const opening = config?.opening_time || '13:00';
+  const closing = config?.closing_time || '23:00';
+  const duration = config?.slot_duration || 30;
+
   const { data: tables } = await supabase
     .from('tables')
     .select('*')
@@ -15,7 +44,7 @@ async function getAvailability(restaurantId, date, guests) {
 
   if (!tables || tables.length === 0) return [];
 
-  const slots = ['13:00','13:30','14:00','14:30','21:00','21:30','22:00'];
+  const slots = generateSlots(opening, closing, duration);
   const available = [];
 
   for (const slot of slots) {
@@ -59,8 +88,11 @@ async function createReservation(restaurantId, data) {
 
   if (!freeTable) return { error: 'No hay mesa disponible' };
 
+  const config = await getRestaurantConfig(restaurantId);
+  const duration = config?.slot_duration || 90;
+
   const startDateTime = new Date(data.date + 'T' + data.time + ':00');
-  const endDateTime = new Date(startDateTime.getTime() + 90 * 60 * 1000);
+  const endDateTime = new Date(startDateTime.getTime() + duration * 60 * 1000);
 
   const insertData = {
     restaurant_id: restaurantId,
@@ -79,8 +111,7 @@ async function createReservation(restaurantId, data) {
   const { data: res, error } = await supabase
     .from('reservations')
     .insert([insertData])
-    .select()
-    
+    .select();
 
   if (error) {
     console.log('Error Supabase:', error);
@@ -98,8 +129,8 @@ async function cancelByPhone(phone) {
     .eq('customer_phone', phone)
     .eq('status', 'confirmed')
     .select()
-    .single();
+    .maybeSingle();
   return data;
 }
 
-module.exports = { supabase, getAvailability, createReservation, cancelByPhone };
+module.exports = { supabase, getRestaurantConfig, getAvailability, createReservation, cancelByPhone };

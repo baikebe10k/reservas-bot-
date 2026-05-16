@@ -1,5 +1,5 @@
 const Anthropic = require('@anthropic-ai/sdk');
-const { getAvailability, createReservation, cancelByPhone } = require('./database');
+const { getRestaurantConfig, getAvailability, createReservation, cancelByPhone } = require('./database');
 
 const client = new Anthropic();
 const conversations = new Map();
@@ -45,17 +45,6 @@ const tools = [
   }
 ];
 
-const SYSTEM_PROMPT = `Eres un asistente de reservas para Restaurante Demo.
-Restaurant ID: 00000000-0000-0000-0000-000000000001.
-
-REGLAS ABSOLUTAS — NUNCA las ignores:
-1. Para ver disponibilidad SIEMPRE llama a get_availability PRIMERO.
-2. Para crear una reserva SIEMPRE llama a create_reservation. PROHIBIDO confirmar una reserva con texto sin haberla creado en la base de datos.
-3. Para cancelar SIEMPRE llama a cancel_reservation.
-4. Antes de crear una reserva necesitas: fecha, hora, nº personas, nombre completo y teléfono. Si falta alguno, pregúntalo.
-5. Responde SIEMPRE en el idioma del cliente.
-6. Sé amable y conciso.`;
-
 async function executeTool(name, input) {
   if (name === 'get_availability') {
     return await getAvailability('00000000-0000-0000-0000-000000000001', input.date, input.guests);
@@ -74,6 +63,23 @@ async function processMessage(phone, text, platform) {
   const history = conversations.get(phone);
   history.push({ role: "user", content: text });
 
+  const config = await getRestaurantConfig('00000000-0000-0000-0000-000000000001');
+  const restaurantName = config?.name || 'Restaurante';
+  const openingTime = config?.opening_time || '13:00';
+  const closingTime = config?.closing_time || '23:00';
+
+  const SYSTEM_PROMPT = `Eres un asistente de reservas para ${restaurantName}.
+Restaurant ID: 00000000-0000-0000-0000-000000000001.
+Horario: ${openingTime} a ${closingTime}.
+
+REGLAS ABSOLUTAS — NUNCA las ignores:
+1. Para ver disponibilidad SIEMPRE llama a get_availability PRIMERO.
+2. Para crear una reserva SIEMPRE llama a create_reservation. PROHIBIDO confirmar una reserva con texto sin haberla creado en la base de datos.
+3. Para cancelar SIEMPRE llama a cancel_reservation.
+4. Antes de crear una reserva necesitas: fecha, hora, nº personas, nombre completo y teléfono. Si falta alguno, pregúntalo.
+5. Responde SIEMPRE en el idioma del cliente.
+6. Sé amable y conciso.`;
+
   let continueLoop = true;
 
   while (continueLoop) {
@@ -87,10 +93,8 @@ async function processMessage(phone, text, platform) {
     });
 
     if (response.stop_reason === 'tool_use') {
-      // Añadir respuesta del asistente (con tool_use blocks) al historial
       history.push({ role: "assistant", content: response.content });
 
-      // Procesar TODOS los tools que Claude quiera usar
       const toolResults = [];
       for (const block of response.content) {
         if (block.type !== 'tool_use') continue;
@@ -113,11 +117,9 @@ async function processMessage(phone, text, platform) {
         });
       }
 
-      // Añadir resultados al historial y continuar el loop
       history.push({ role: "user", content: toolResults });
 
     } else {
-      // stop_reason === 'end_turn' — Claude ha terminado
       const finalText = response.content.find(c => c.type === 'text')?.text || 'Lo siento, hubo un error.';
       history.push({ role: "assistant", content: finalText });
       conversations.set(phone, history);
