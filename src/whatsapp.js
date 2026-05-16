@@ -3,30 +3,32 @@ const { processMessage } = require('./ai');
 require('dotenv').config();
 
 async function handleWhatsAppMessage(req, res) {
-  try {
-    const from = req.body.From?.replace('whatsapp:', '');
-    const text = req.body.Body;
+ try {
+   const from = req.body.From?.replace('whatsapp:', '');
+   const text = req.body.Body;
 
-    if (!from || !text) {
-      res.writeHead(200, { 'Content-Type': 'text/xml' });
-      res.end('<?xml version="1.0" encoding="UTF-8"?><Response></Response>');
-      return;
-    }
+   console.log('Mensaje recibido:', from, text);
 
-    const reply = await processMessage(from, text, 'twilio');
+   if (!from || !text) {
+     res.writeHead(200, { 'Content-Type': 'text/xml' });
+     res.end('<?xml version="1.0" encoding="UTF-8"?><Response></Response>');
+     return;
+   }
 
-    const twiml = reply
-      ? `<?xml version="1.0" encoding="UTF-8"?><Response><Message>${reply}</Message></Response>`
-      : `<?xml version="1.0" encoding="UTF-8"?><Response></Response>`;
+   const reply = await processMessage(from, text, 'twilio');
 
-    res.writeHead(200, { 'Content-Type': 'text/xml' });
-    res.end(twiml);
+   const twiml = reply
+     ? `<?xml version="1.0" encoding="UTF-8"?><Response><Message>${reply}</Message></Response>`
+     : `<?xml version="1.0" encoding="UTF-8"?><Response></Response>`;
 
-  } catch (err) {
-    console.error('Error:', err.message);
-    res.writeHead(200, { 'Content-Type': 'text/xml' });
-    res.end(`<?xml version="1.0" encoding="UTF-8"?><Response><Message>Error: ${err.message}</Message></Response>`);
-  }
+   res.writeHead(200, { 'Content-Type': 'text/xml' });
+   res.end(twiml);
+
+ } catch (err) {
+   console.error('Error:', err.message);
+   res.writeHead(200, { 'Content-Type': 'text/xml' });
+   res.end(`<?xml version="1.0" encoding="UTF-8"?><Response><Message>Error: ${err.message}</Message></Response>`);
+ }
 }
 
 module.exports = { handleWhatsAppMessage };
