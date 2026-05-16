@@ -1,6 +1,4 @@
-const axios = require('axios');
 const { processMessage } = require('./ai');
-require('dotenv').config();
 
 async function handleWhatsAppMessage(req, res) {
  try {
@@ -15,17 +13,19 @@ async function handleWhatsAppMessage(req, res) {
      return;
    }
 
+   console.log('Llamando processMessage...');
    const reply = await processMessage(from, text, 'twilio');
+   console.log('Reply:', reply);
 
    const twiml = reply
-     ? `<?xml version="1.0" encoding="UTF-8"?><Response><Message>${reply}</Message></Response>`
+     ? `<?xml version="1.0" encoding="UTF-8"?><Response><Message><![CDATA[${reply}]]></Message></Response>`
      : `<?xml version="1.0" encoding="UTF-8"?><Response></Response>`;
 
    res.writeHead(200, { 'Content-Type': 'text/xml' });
    res.end(twiml);
 
  } catch (err) {
-   console.error('Error:', err.message);
+   console.error('Error completo:', err.stack || err.message);
    res.writeHead(200, { 'Content-Type': 'text/xml' });
    res.end(`<?xml version="1.0" encoding="UTF-8"?><Response><Message>Error: ${err.message}</Message></Response>`);
  }
