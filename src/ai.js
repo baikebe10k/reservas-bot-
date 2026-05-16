@@ -19,7 +19,7 @@ const tools = [
   },
   {
     name: "create_reservation",
-    description: "Crea una reserva",
+    description: "Crea una reserva en la base de datos. OBLIGATORIO llamar antes de confirmar.",
     input_schema: {
       type: "object",
       properties: {
@@ -45,63 +45,86 @@ const tools = [
   }
 ];
 
+const SYSTEM_PROMPT = `Eres un asistente de reservas para Restaurante Demo.
+Restaurant ID: 00000000-0000-0000-0000-000000000001.
+
+REGLAS ABSOLUTAS — NUNCA las ignores:
+1. Para ver disponibilidad SIEMPRE llama a get_availability PRIMERO.
+2. Para crear una reserva SIEMPRE llama a create_reservation. PROHIBIDO confirmar una reserva con texto sin haberla creado en la base de datos.
+3. Para cancelar SIEMPRE llama a cancel_reservation.
+4. Antes de crear una reserva necesitas: fecha, hora, nº personas, nombre completo y teléfono. Si falta alguno, pregúntalo.
+5. Responde SIEMPRE en el idioma del cliente.
+6. Sé amable y conciso.`;
+
+async function executeTool(name, input) {
+  if (name === 'get_availability') {
+    return await getAvailability('00000000-0000-0000-0000-000000000001', input.date, input.guests);
+  } else if (name === 'create_reservation') {
+    return await createReservation('00000000-0000-0000-0000-000000000001', input);
+  } else if (name === 'cancel_reservation') {
+    return await cancelByPhone(input.customer_phone);
+  }
+  return { error: 'Tool desconocido' };
+}
+
 async function processMessage(phone, text, platform) {
   if (!conversations.has(phone)) {
     conversations.set(phone, []);
   }
-  let history = conversations.get(phone);
-  history = history.filter(msg => {
-    if (Array.isArray(msg.content)) {
-      return !msg.content.some(c => c.type === 'tool_use' || c.type === 'tool_result');
-    }
-    return true;
-  });
+  const history = conversations.get(phone);
   history.push({ role: "user", content: text });
-  const response = await client.messages.create({
-    model: "claude-haiku-4-5-20251001",
-    max_tokens: 1024,
-    system: "Eres un asistente de reservas para Restaurante Demo. Restaurant ID: 00000000-0000-0000-0000-000000000001. REGLAS ESTRICTAS: 1) Para ver horarios SIEMPRE usa get_availability. 2) Para hacer una reserva SIEMPRE usa create_reservation - NUNCA confirmes sin llamar al tool. 3) Para cancelar SIEMPRE usa cancel_reservation. 4) Necesitas: fecha, hora, personas, nombre y telefono antes de crear reserva. 5) Responde en el idioma del cliente.",
-    messages: history,
-    tools: tools,
-    tool_choice: { type: "auto" }
-  });
-  if (response.stop_reason === 'tool_use') {
-    const toolUseBlock = response.content.find(c => c.type === 'tool_use');
-    let toolResult;
-    try {
-      if (toolUseBlock.name === 'get_availability') {
-        const result = await getAvailability('00000000-0000-0000-0000-000000000001', toolUseBlock.input.date, toolUseBlock.input.guests);
-        toolResult = JSON.stringify(result);
-      } else if (toolUseBlock.name === 'create_reservation') {
-        const result = await createReservation('00000000-0000-0000-0000-000000000001', toolUseBlock.input);
-        toolResult = JSON.stringify(result);
-      } else if (toolUseBlock.name === 'cancel_reservation') {
-        const result = await cancelByPhone(toolUseBlock.input.customer_phone);
-        toolResult = JSON.stringify(result);
-      }
-    } catch (e) {
-      toolResult = JSON.stringify({ error: e.message });
-    }
-    const response2 = await client.messages.create({
+
+  let continueLoop = true;
+
+  while (continueLoop) {
+    const response = await client.messages.create({
       model: "claude-haiku-4-5-20251001",
       max_tokens: 1024,
-      system: "Eres un asistente de reservas para Restaurante Demo. Ayuda a los clientes a hacer, consultar y cancelar reservas. Responde siempre en el idioma del cliente. Se amable y conciso. IMPORTANTE: Para confirmar una reserva SIEMPRE debes usar el tool create_reservation. Nunca confirmes una reserva sin llamar al tool.",
-      messages: [
-        ...history,
-        { role: "assistant", content: response.content },
-        { role: "user", content: [{ type: "tool_result", tool_use_id: toolUseBlock.id, content: toolResult }] }
-      ],
-      tools: tools
+      system: SYSTEM_PROMPT,
+      messages: history,
+      tools: tools,
+      tool_choice: { type: "auto" }
     });
-    const finalText = response2.content.find(c => c.type === 'text')?.text || 'Lo siento, hubo un error.';
-    history.push({ role: "assistant", content: finalText });
-    conversations.set(phone, history);
-    return finalText;
+
+    if (response.stop_reason === 'tool_use') {
+      // Añadir respuesta del asistente (con tool_use blocks) al historial
+      history.push({ role: "assistant", content: response.content });
+
+      // Procesar TODOS los tools que Claude quiera usar
+      const toolResults = [];
+      for (const block of response.content) {
+        if (block.type !== 'tool_use') continue;
+
+        console.log(`[Tool llamado] ${block.name}`, JSON.stringify(block.input));
+
+        let result;
+        try {
+          result = await executeTool(block.name, block.input);
+          console.log(`[Tool resultado] ${block.name}`, JSON.stringify(result));
+        } catch (e) {
+          console.error(`[Tool error] ${block.name}`, e.message);
+          result = { error: e.message };
+        }
+
+        toolResults.push({
+          type: "tool_result",
+          tool_use_id: block.id,
+          content: JSON.stringify(result)
+        });
+      }
+
+      // Añadir resultados al historial y continuar el loop
+      history.push({ role: "user", content: toolResults });
+
+    } else {
+      // stop_reason === 'end_turn' — Claude ha terminado
+      const finalText = response.content.find(c => c.type === 'text')?.text || 'Lo siento, hubo un error.';
+      history.push({ role: "assistant", content: finalText });
+      conversations.set(phone, history);
+      continueLoop = false;
+      return finalText;
+    }
   }
-  const replyText = response.content.find(c => c.type === 'text')?.text || 'Lo siento, hubo un error.';
-  history.push({ role: "assistant", content: replyText });
-  conversations.set(phone, history);
-  return replyText;
 }
 
 module.exports = { processMessage };
