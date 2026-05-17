@@ -1,5 +1,5 @@
 const Anthropic = require('@anthropic-ai/sdk');
-const { getRestaurantConfig, getAvailability, createReservation, cancelByPhone } = require('./database');
+const { getRestaurantConfig, getAvailability, createReservation, cancelByPhone, findReservationByName, cancelById } = require('./database');
 
 const client = new Anthropic();
 const conversations = new Map();
@@ -33,14 +33,25 @@ const tools = [
     }
   },
   {
-    name: "cancel_reservation",
-    description: "Cancela reservas de un telefono",
+    name: "find_reservation_by_name",
+    description: "Busca reservas confirmadas por nombre del cliente",
     input_schema: {
       type: "object",
       properties: {
-        customer_phone: { type: "string" }
+        name: { type: "string", description: "Nombre o parte del nombre del cliente" }
       },
-      required: ["customer_phone"]
+      required: ["name"]
+    }
+  },
+  {
+    name: "cancel_reservation",
+    description: "Cancela una reserva por su ID. Usar solo tras confirmar con el cliente.",
+    input_schema: {
+      type: "object",
+      properties: {
+        reservation_id: { type: "string", description: "ID de la reserva a cancelar" }
+      },
+      required: ["reservation_id"]
     }
   }
 ];
@@ -60,8 +71,10 @@ async function executeTool(name, input) {
       };
     }
     return result;
+  } else if (name === 'find_reservation_by_name') {
+    return await findReservationByName('00000000-0000-0000-0000-000000000001', input.name);
   } else if (name === 'cancel_reservation') {
-    return await cancelByPhone(input.customer_phone);
+    return await cancelById(input.reservation_id);
   }
   return { error: 'Tool desconocido' };
 }
@@ -87,7 +100,7 @@ REGLAS:
 1. Cuando el cliente escriba por primera vez, salúdale con una bienvenida cálida según su idioma. Español: "¡Hola! Bienvenido/a a ${restaurantName} 😊 ¿En qué te puedo ayudar?" / Catalán: "Hola! Benvingut/da a ${restaurantName} 😊 En què et puc ajudar?" / Inglés: "Hi! Welcome to ${restaurantName} 😊 How can I help you?" / Francés: "Bonjour! Bienvenue au ${restaurantName} 😊 Comment puis-je vous aider?" / Alemán: "Hallo! Willkommen bei ${restaurantName} 😊 Wie kann ich Ihnen helfen?" Detecta el idioma del cliente. NUNCA listes opciones en el saludo.
 2. Para ver disponibilidad SIEMPRE llama a get_availability PRIMERO antes de responder.
 3. Para crear una reserva SIEMPRE llama a create_reservation. PROHIBIDO confirmar sin llamar al tool.
-4. Para cancelar SIEMPRE llama a cancel_reservation.
+4. Para cancelar: PRIMERO llama a find_reservation_by_name con el nombre del cliente. Muestra los datos encontrados de forma cordial: "He encontrado la siguiente reserva a su nombre: [fecha] a las [hora] para [personas] personas. ¿Podría confirmarme que es esta su reserva?" Si confirma, llama a cancel_reservation con el ID. Si hay varias reservas, muéstralas todas y pregunta cuál desea cancelar.
 5. Necesitas: fecha, hora, personas, nombre completo y teléfono antes de crear reserva.
 6. Responde SIEMPRE en el idioma del cliente.
 7. Sé conciso y natural, como un humano. Sin listas innecesarias.

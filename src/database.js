@@ -125,6 +125,27 @@ async function createReservation(restaurantId, data) {
   return res;
 }
 
+async function findReservationByName(restaurantId, name) {
+  const { data } = await getSupabase()
+    .from('reservations')
+    .select('*')
+    .eq('restaurant_id', restaurantId)
+    .eq('status', 'confirmed')
+    .ilike('customer_name', '%' + name + '%')
+    .order('date', { ascending: true });
+  return data || [];
+}
+
+async function cancelById(id) {
+  const { data } = await getSupabase()
+    .from('reservations')
+    .update({ status: 'cancelled' })
+    .eq('id', id)
+    .select()
+    .maybeSingle();
+  return data;
+}
+
 async function cancelByPhone(phone) {
   const { data } = await getSupabase()
     .from('reservations')
@@ -136,4 +157,4 @@ async function cancelByPhone(phone) {
   return data;
 }
 
-module.exports = { getSupabase, getRestaurantConfig, getAvailability, createReservation, cancelByPhone };
+module.exports = { getSupabase, getRestaurantConfig, getAvailability, createReservation, cancelByPhone, findReservationByName, cancelById };
