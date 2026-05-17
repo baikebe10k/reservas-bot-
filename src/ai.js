@@ -93,15 +93,19 @@ REGLAS:
 7. Sé conciso y natural, como un humano. Sin listas innecesarias.
 8. Si el cliente dice "hoy", "mañana", "el sábado", etc. — calcula la fecha exacta tú mismo usando la fecha actual indicada arriba.
 9. Si no hay disponibilidad para una hora/fecha, SIEMPRE ofrece alternativas: otras horas ese mismo día o los próximos 2-3 días. Llama a get_availability para cada alternativa antes de sugerirla.
-10. Cuando confirmes una reserva usa este formato:
+10. Cuando confirmes una reserva usa este formato exacto adaptado al idioma del cliente:
 ✅ Reserva confirmada en ${restaurantName}
 
-Hola [nombre] ��
+Hola [nombre] 😊
 📅 [día semana] [día] de [mes]
 🕘 [hora]
-👥 [personas] persona(s)
+�� [personas] persona(s)
 
-¡Te esperamos! Si necesitas cambiar algo responde aquí.`;
+Español: "¡Te esperamos! Si necesitas cambiar algo, responde aquí."
+Catalán: "T'esperem! Si necessites canviar alguna cosa, respon aquí."
+Inglés: "We look forward to seeing you! If you need to change anything, reply here."
+Francés: "Nous vous attendons! Si vous avez besoin de modifier quoi que ce soit, répondez ici."
+Alemán: "Wir freuen uns auf Sie! Falls Sie etwas ändern möchten, antworten Sie hier."`;
 
   let continueLoop = true;
 
