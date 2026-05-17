@@ -43,7 +43,7 @@ async function getAvailability(restaurantId, date, guests) {
     .eq('restaurant_id', restaurantId)
     .eq('active', true)
     .gte('capacity', guests)
-    .not('manual_status', 'in', '("blocked","occupied")');
+    .or('manual_status.is.null,manual_status.eq.available');
 
   if (!tables || tables.length === 0) return [];
 
