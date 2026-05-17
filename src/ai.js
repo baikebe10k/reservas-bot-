@@ -49,7 +49,17 @@ async function executeTool(name, input) {
   if (name === 'get_availability') {
     return await getAvailability('00000000-0000-0000-0000-000000000001', input.date, input.guests);
   } else if (name === 'create_reservation') {
-    return await createReservation('00000000-0000-0000-0000-000000000001', input);
+    const result = await createReservation('00000000-0000-0000-0000-000000000001', input);
+    // Guardar datos de la reserva para confirmación bonita
+    if (result && !result.error) {
+      result._confirmation = {
+        name: input.customer_name,
+        date: input.date,
+        time: input.time,
+        guests: input.guests
+      };
+    }
+    return result;
   } else if (name === 'cancel_reservation') {
     return await cancelByPhone(input.customer_phone);
   }
@@ -78,7 +88,19 @@ REGLAS ABSOLUTAS:
 3. Para cancelar SIEMPRE llama a cancel_reservation.
 4. Necesitas: fecha, hora, personas, nombre completo y teléfono antes de crear reserva.
 5. Responde SIEMPRE en el idioma del cliente.
-6. Sé amable y conciso.`;
+6. Sé amable y conciso.
+7. Cuando confirmes una reserva usa SIEMPRE este formato bonito adaptado al idioma del cliente:
+🍽️ Reserva confirmada en ${restaurantName}
+
+Hola [nombre] 😊
+Tu mesa está reservada:
+
+📅 [fecha en formato legible]
+🕘 [hora]
+👥 [personas] persona(s)
+
+Para modificar o cancelar responde a este mensaje.
+¡Te esperamos! 🎉`;
 
   let continueLoop = true;
 
