@@ -1,7 +1,7 @@
 const http = require('http');
 const { handleWhatsAppMessage } = require('./whatsapp');
 require('dotenv').config();
-require('./reviews');
+// require('./reviews') // Desactivado temporalmente;
 
 const PORT = process.env.PORT || 3000;
 
