@@ -1,42 +1,52 @@
 const { processMessage } = require('./ai');
 
 async function handleWhatsAppMessage(req, res) {
- try {
-   const from = req.body.From?.replace('whatsapp:', '');
-   const text = req.body.Body;
+  try {
+    res.writeHead(200);
+    res.end('OK');
 
-   console.log('Mensaje recibido:', from, text);
+    const entry = req.body?.entry?.[0];
+    const change = entry?.changes?.[0];
+    const message = change?.value?.messages?.[0];
 
-   if (!from || !text) {
-     res.writeHead(200, { 'Content-Type': 'text/xml' });
-     res.end('<?xml version="1.0" encoding="UTF-8"?><Response></Response>');
-     return;
-   }
+    if (!message || message.type !== 'text') return;
 
-   console.log('Llamando processMessage...');
-   const reply = await processMessage(from, text, 'twilio');
-   console.log('Reply:', reply);
+    const from = message.from;
+    const text = message.text.body;
 
-   const clean = (reply || '')
-     .replace(/\*\*/g, '')
-     .replace(/\*/g, '')
-     .replace(/#{1,6} /g, '')
-     .replace(/&/g, 'y')
-     .replace(/</g, '')
-     .replace(/>/g, '');
+    console.log('Mensaje recibido Meta:', from, text);
 
-   const twiml = clean
-     ? '<?xml version="1.0" encoding="UTF-8"?><Response><Message>' + clean + '</Message></Response>'
-     : '<?xml version="1.0" encoding="UTF-8"?><Response></Response>';
+    const reply = await processMessage(from, text, 'meta');
 
-   res.writeHead(200, { 'Content-Type': 'text/xml' });
-   res.end(twiml);
+    const clean = (reply || '')
+      .replace(/\*\*/g, '')
+      .replace(/\*/g, '')
+      .replace(/#{1,6} /g, '')
+      .replace(/&/g, 'y')
+      .replace(/</g, '')
+      .replace(/>/g, '');
 
- } catch (err) {
-   console.error('Error completo:', err.stack || err.message);
-   res.writeHead(200, { 'Content-Type': 'text/xml' });
-   res.end('<?xml version="1.0" encoding="UTF-8"?><Response><Message>Hubo un error, por favor intenta de nuevo.</Message></Response>');
- }
+    if (!clean) return;
+
+    await fetch(`https://graph.facebook.com/v19.0/${process.env.META_PHONE_NUMBER_ID}/messages`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${process.env.META_TOKEN}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        messaging_product: 'whatsapp',
+        to: from,
+        type: 'text',
+        text: { body: clean }
+      })
+    });
+
+    console.log('Mensaje enviado a:', from);
+
+  } catch (err) {
+    console.error('Error Meta webhook:', err.stack || err.message);
+  }
 }
 
 module.exports = { handleWhatsAppMessage };
