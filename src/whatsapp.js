@@ -1,5 +1,15 @@
 const { processMessage } = require('./ai');
 
+const processedMessages = new Set();
+
+function normalizePhone(phone) {
+  let clean = phone.replace(/\D/g, '');
+  if (!clean.startsWith('34') && clean.length === 9) {
+    clean = '34' + clean;
+  }
+  return '+' + clean;
+}
+
 async function handleWhatsAppMessage(req, res) {
   try {
     res.writeHead(200);
@@ -11,10 +21,18 @@ async function handleWhatsAppMessage(req, res) {
 
     if (!message || message.type !== 'text') return;
 
-    const from = message.from;
+    const messageId = message.id;
+    if (processedMessages.has(messageId)) {
+      console.log('Mensaje duplicado ignorado:', messageId);
+      return;
+    }
+    processedMessages.add(messageId);
+    if (processedMessages.size > 1000) processedMessages.clear();
+
+    const from = normalizePhone(message.from);
     const text = message.text.body;
 
-    console.log('Mensaje recibido Meta:', from, text);
+    console.log(`[${new Date().toISOString()}] Mensaje recibido de ${from}: ${text}`);
 
     const reply = await processMessage(from, text, 'meta');
 
@@ -42,10 +60,10 @@ async function handleWhatsAppMessage(req, res) {
       })
     });
 
-    console.log('Mensaje enviado a:', from);
+    console.log(`[${new Date().toISOString()}] Respuesta enviada a ${from}`);
 
   } catch (err) {
-    console.error('Error Meta webhook:', err.stack || err.message);
+    console.error(`[${new Date().toISOString()}] Error Meta webhook:`, err.stack || err.message);
   }
 }
 
