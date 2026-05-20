@@ -157,4 +157,39 @@ async function cancelByPhone(phone) {
   return data;
 }
 
-module.exports = { getSupabase, getRestaurantConfig, getAvailability, createReservation, cancelByPhone, findReservationByName, cancelById };
+async function saveMessage(restaurantId, customerPhone, customerName, direction, message) {
+  try {
+    await getSupabase()
+      .from('conversations')
+      .insert([{
+        restaurant_id: restaurantId,
+        customer_phone: customerPhone,
+        customer_name: customerName || null,
+        direction,
+        message
+      }]);
+  } catch (e) {
+    console.error('[saveMessage error]', e.message);
+  }
+}
+
+async function getConversations(restaurantId) {
+  const { data } = await getSupabase()
+    .from('conversations')
+    .select('*')
+    .eq('restaurant_id', restaurantId)
+    .order('created_at', { ascending: false });
+  return data || [];
+}
+
+module.exports = {
+  getSupabase,
+  getRestaurantConfig,
+  getAvailability,
+  createReservation,
+  cancelByPhone,
+  findReservationByName,
+  cancelById,
+  saveMessage,
+  getConversations
+};

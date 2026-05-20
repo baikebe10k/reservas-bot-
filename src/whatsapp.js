@@ -1,4 +1,5 @@
 const { processMessage } = require('./ai');
+const { saveMessage } = require('./database');
 
 const processedMessages = new Set();
 
@@ -34,6 +35,9 @@ async function handleWhatsAppMessage(req, res) {
 
     console.log(`[${new Date().toISOString()}] Mensaje recibido de ${from}: ${text}`);
 
+    // Guardar mensaje entrante
+    await saveMessage('00000000-0000-0000-0000-000000000001', from, null, 'inbound', text);
+
     const reply = await processMessage(from, text, 'meta');
 
     const clean = (reply || '')
@@ -45,6 +49,9 @@ async function handleWhatsAppMessage(req, res) {
       .replace(/>/g, '');
 
     if (!clean) return;
+
+    // Guardar mensaje saliente
+    await saveMessage('00000000-0000-0000-0000-000000000001', from, null, 'outbound', clean);
 
     await fetch(`https://graph.facebook.com/v19.0/${process.env.META_PHONE_NUMBER_ID}/messages`, {
       method: 'POST',
