@@ -7,6 +7,15 @@ function getSupabase() {
   );
 }
 
+async function getRestaurantByPhone(whatsappNumber) {
+  const { data } = await getSupabase()
+    .from('restaurants')
+    .select('*')
+    .eq('whatsapp_number', whatsappNumber)
+    .maybeSingle();
+  return data;
+}
+
 async function getRestaurantConfig(restaurantId) {
   const { data } = await getSupabase()
     .from('restaurants')
@@ -185,6 +194,7 @@ async function getConversations(restaurantId) {
 module.exports = {
   getSupabase,
   getRestaurantConfig,
+  getRestaurantByPhone,
   getAvailability,
   createReservation,
   cancelByPhone,

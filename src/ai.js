@@ -56,38 +56,17 @@ const tools = [
   }
 ];
 
-async function executeTool(name, input) {
-  if (name === 'get_availability') {
-    return await getAvailability('00000000-0000-0000-0000-000000000001', input.date, input.guests);
-  } else if (name === 'create_reservation') {
-    const result = await createReservation('00000000-0000-0000-0000-000000000001', input);
-    if (result && !result.error) {
-      result._confirmation = {
-        name: input.customer_name,
-        date: input.date,
-        time: input.time,
-        guests: input.guests
-      };
-    }
-    return result;
-  } else if (name === 'find_reservation_by_name') {
-    return await findReservationByName('00000000-0000-0000-0000-000000000001', input.name);
-  } else if (name === 'cancel_reservation') {
-    return await cancelById(input.reservation_id);
+async function processMessage(phone, text, platform, restaurantId) {
+  const convKey = `${restaurantId}:${phone}`;
+  if (!conversations.has(convKey)) {
+    conversations.set(convKey, []);
   }
-  return { error: 'Tool desconocido' };
-}
-
-async function processMessage(phone, text, platform) {
-  if (!conversations.has(phone)) {
-    conversations.set(phone, []);
-  }
-  const history = conversations.get(phone);
+  const history = conversations.get(convKey);
   history.push({ role: "user", content: text });
 
   let config, restaurantName, openingTime, closingTime;
   try {
-    config = await getRestaurantConfig('00000000-0000-0000-0000-000000000001');
+    config = await getRestaurantConfig(restaurantId);
     restaurantName = config?.name || 'Restaurante';
     openingTime = config?.opening_time || '13:00';
     closingTime = config?.closing_time || '23:00';
@@ -96,6 +75,28 @@ async function processMessage(phone, text, platform) {
     restaurantName = 'Restaurante';
     openingTime = '13:00';
     closingTime = '23:00';
+  }
+
+  async function executeTool(name, input) {
+    if (name === 'get_availability') {
+      return await getAvailability(restaurantId, input.date, input.guests);
+    } else if (name === 'create_reservation') {
+      const result = await createReservation(restaurantId, input);
+      if (result && !result.error) {
+        result._confirmation = {
+          name: input.customer_name,
+          date: input.date,
+          time: input.time,
+          guests: input.guests
+        };
+      }
+      return result;
+    } else if (name === 'find_reservation_by_name') {
+      return await findReservationByName(restaurantId, input.name);
+    } else if (name === 'cancel_reservation') {
+      return await cancelById(input.reservation_id);
+    }
+    return { error: 'Tool desconocido' };
   }
 
   const SYSTEM_PROMPT = `Eres el asistente de reservas de ${restaurantName}. Respondes por WhatsApp de forma natural y amable.
@@ -160,14 +161,14 @@ Alemán: "Wir freuen uns auf Sie! Falls Sie etwas ändern möchten, antworten Si
       } else {
         const finalText = response.content.find(c => c.type === 'text')?.text || 'Lo siento, hubo un error.';
         history.push({ role: "assistant", content: finalText });
-        conversations.set(phone, history);
+        conversations.set(convKey, history);
         continueLoop = false;
         return finalText;
       }
     }
   } catch (err) {
     console.error(`[${new Date().toISOString()}] Error Anthropic:`, err.message);
-    conversations.set(phone, history);
+    conversations.set(convKey, history);
     return 'Ahora mismo tenemos un pequeño problema técnico. Por favor, inténtalo de nuevo en un momento o llámanos directamente. Disculpa las molestias 🙏';
   }
 }

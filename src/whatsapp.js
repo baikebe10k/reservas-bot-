@@ -1,5 +1,5 @@
 const { processMessage } = require('./ai');
-const { saveMessage } = require('./database');
+const { saveMessage, getRestaurantByPhone } = require('./database');
 
 const processedMessages = new Set();
 
@@ -19,6 +19,7 @@ async function handleWhatsAppMessage(req, res) {
     const entry = req.body?.entry?.[0];
     const change = entry?.changes?.[0];
     const message = change?.value?.messages?.[0];
+    const metadata = change?.value?.metadata;
 
     if (!message || message.type !== 'text') return;
 
@@ -32,13 +33,25 @@ async function handleWhatsAppMessage(req, res) {
 
     const from = normalizePhone(message.from);
     const text = message.text.body;
+    const toNumber = '+' + metadata?.phone_number_id;
 
     console.log(`[${new Date().toISOString()}] Mensaje recibido de ${from}: ${text}`);
 
-    // Guardar mensaje entrante
-    await saveMessage('00000000-0000-0000-0000-000000000001', from, null, 'inbound', text);
+    // Buscar restaurante por número de WhatsApp
+    const displayPhoneNumber = normalizePhone(metadata?.display_phone_number || '');
+    const restaurant = await getRestaurantByPhone(displayPhoneNumber);
 
-    const reply = await processMessage(from, text, 'meta');
+    if (!restaurant) {
+      console.error(`[ERROR] No se encontró restaurante para el número ${displayPhoneNumber}`);
+      return;
+    }
+
+    const restaurantId = restaurant.id;
+    console.log(`[${new Date().toISOString()}] Restaurante: ${restaurant.name} (${restaurantId})`);
+
+    await saveMessage(restaurantId, from, null, 'inbound', text);
+
+    const reply = await processMessage(from, text, 'meta', restaurantId);
 
     const clean = (reply || '')
       .replace(/\*\*/g, '')
@@ -50,8 +63,7 @@ async function handleWhatsAppMessage(req, res) {
 
     if (!clean) return;
 
-    // Guardar mensaje saliente
-    await saveMessage('00000000-0000-0000-0000-000000000001', from, null, 'outbound', clean);
+    await saveMessage(restaurantId, from, null, 'outbound', clean);
 
     await fetch(`https://graph.facebook.com/v19.0/${process.env.META_PHONE_NUMBER_ID}/messages`, {
       method: 'POST',
