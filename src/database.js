@@ -134,15 +134,30 @@ async function createReservation(restaurantId, data) {
   return res;
 }
 
+function normalize(str) {
+  return (str || '').toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim();
+}
+
 async function findReservationByName(restaurantId, name) {
   const { data } = await getSupabase()
     .from('reservations')
     .select('*')
     .eq('restaurant_id', restaurantId)
     .eq('status', 'confirmed')
-    .ilike('customer_name', '%' + name + '%')
     .order('date', { ascending: true });
-  return data || [];
+
+  if (!data) return [];
+
+  const searchNorm = normalize(name);
+  const searchWords = searchNorm.split(/\s+/).filter(Boolean);
+
+  return data.filter(r => {
+    const nameNorm = normalize(r.customer_name);
+    return searchWords.every(word => nameNorm.includes(word));
+  });
 }
 
 async function cancelById(id) {
