@@ -77,6 +77,26 @@ async function processMessage(phone, text, platform, restaurantId) {
     closingTime = '23:00';
   }
 
+  // --- FECHA/HORA ESPAÑA FIABLE ---
+  const nowMadrid = new Date().toLocaleString('en-US', { timeZone: 'Europe/Madrid' });
+  const madridDate = new Date(nowMadrid);
+  const pad = n => String(n).padStart(2, '0');
+  const todayISO = `${madridDate.getFullYear()}-${pad(madridDate.getMonth()+1)}-${pad(madridDate.getDate())}`;
+  const currentHour = `${pad(madridDate.getHours())}:${pad(madridDate.getMinutes())}`;
+  const nextHour = `${pad(madridDate.getHours()+1)}:00`;
+  const weekdayNames = ['domingo','lunes','martes','miércoles','jueves','viernes','sábado'];
+  const weekdayNum = madridDate.getDay();
+
+  const next7 = [];
+  for (let i = 0; i <= 7; i++) {
+    const d = new Date(madridDate);
+    d.setDate(madridDate.getDate() + i);
+    const iso = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+    const wday = weekdayNames[d.getDay()];
+    const label = i === 0 ? ' (HOY)' : i === 1 ? ' (MAÑANA)' : '';
+    next7.push(`  - ${wday}${label} → ${iso}`);
+  }
+
   async function executeTool(name, input) {
     if (name === 'get_availability') {
       return await getAvailability(restaurantId, input.date, input.guests);
@@ -101,7 +121,22 @@ async function processMessage(phone, text, platform, restaurantId) {
 
   const SYSTEM_PROMPT = `Eres el asistente de reservas de ${restaurantName}. Respondes por WhatsApp de forma natural y amable.
 
-FECHA Y HORA ACTUAL: ${new Date().toLocaleString('es-ES', {timeZone: 'Europe/Madrid', weekday:'long', year:'numeric', month:'long', day:'numeric', hour:'2-digit', minute:'2-digit'})}
+FECHA Y HORA ACTUAL EN ESPAÑA:
+- Fecha de hoy: ${todayISO} (${weekdayNames[weekdayNum]})
+- Hora actual: ${currentHour}
+
+PRÓXIMOS 7 DÍAS — USA SIEMPRE ESTAS FECHAS ISO EXACTAS:
+${next7.join('\n')}
+
+REGLAS CRÍTICAS DE FECHAS:
+- "hoy" → ${todayISO}
+- "mañana" → mira la lista y usa la fecha marcada (MAÑANA)
+- "el [día]" o "este [día]" → busca ese día en la lista de arriba (el más próximo)
+- "el [día] que viene" o "[día] de la semana que viene" → busca ese día en la lista pero de la SEMANA SIGUIENTE (el que aparece más abajo)
+- "dentro de una hora" / "ahora" / "en un momento" → fecha ${todayISO}, hora ${nextHour}
+- Formato numérico "3/6", "3/06", "3/06/2026", "3 de junio" → convierte a YYYY-MM-DD usando año ${madridDate.getFullYear()} (si el mes ya pasó, usa ${madridDate.getFullYear()+1})
+- NUNCA inventes ni calcules fechas tú solo. USA SIEMPRE la lista de arriba o convierte el formato numérico.
+
 Horario del restaurante: ${openingTime} a ${closingTime}.
 
 REGLAS:
@@ -112,9 +147,8 @@ REGLAS:
 5. Necesitas: fecha, hora, personas, nombre completo y teléfono antes de crear reserva.
 6. Responde SIEMPRE en el idioma del cliente. Detecta el idioma en su PRIMER mensaje y mantén ESE idioma en TODA la conversación sin mezclarlo. Si escribe en catalán, responde 100% en catalán. Si escribe en español, responde 100% en español. NUNCA mezcles idiomas en una misma respuesta.
 7. Sé conciso y natural, como un humano. Sin listas innecesarias.
-8. Si el cliente dice "hoy", "mañana", "el sábado", etc. — calcula la fecha exacta tú mismo usando la fecha actual indicada arriba.
-9. Si no hay disponibilidad para una hora/fecha, SIEMPRE ofrece alternativas: otras horas ese mismo día o los próximos 2-3 días. Llama a get_availability para cada alternativa antes de sugerirla.
-10. Cuando confirmes una reserva usa este formato exacto adaptado al idioma del cliente:
+8. Si no hay disponibilidad para una hora/fecha, SIEMPRE ofrece alternativas: otras horas ese mismo día o los próximos 2-3 días. Llama a get_availability para cada alternativa antes de sugerirla.
+9. Cuando confirmes una reserva usa este formato exacto adaptado al idioma del cliente:
 ✅ Reserva confirmada en ${restaurantName}
 
 Hola [nombre] 😊

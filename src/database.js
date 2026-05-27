@@ -25,6 +25,16 @@ async function getRestaurantConfig(restaurantId) {
   return data;
 }
 
+const WEEKDAY_NAMES = ['sunday','monday','tuesday','wednesday','thursday','friday','saturday'];
+
+function isRestaurantOpenOnDate(config, dateISO) {
+  const openDays = config?.open_days;
+  if (!openDays || openDays.length === 0) return true; // si no hay config, abierto siempre
+  const dayOfWeek = new Date(dateISO + 'T12:00:00').getDay();
+  const dayName = WEEKDAY_NAMES[dayOfWeek];
+  return openDays.includes(dayName);
+}
+
 function generateSlots(openingTime, closingTime, slotDuration) {
   const slots = [];
   const [openH, openM] = openingTime.split(':').map(Number);
@@ -40,11 +50,32 @@ function generateSlots(openingTime, closingTime, slotDuration) {
   return slots;
 }
 
+function generateSlotsFromShifts(shifts, slotDuration) {
+  const slots = [];
+  for (const shift of shifts) {
+    const shiftSlots = generateSlots(shift.start, shift.end, slotDuration);
+    shiftSlots.forEach(s => { if (!slots.includes(s)) slots.push(s); });
+  }
+  return slots.sort();
+}
+
 async function getAvailability(restaurantId, date, guests) {
   const config = await getRestaurantConfig(restaurantId);
+
+  // Comprobar si el restaurante abre ese día
+  if (!isRestaurantOpenOnDate(config, date)) {
+    return { closed: true, message: 'El restaurante no abre ese día' };
+  }
+
   const opening = config?.opening_time || '13:00';
   const closing = config?.closing_time || '23:00';
   const duration = config?.slot_duration || 30;
+  const shifts = config?.shifts || [];
+
+  // Generar slots según turnos o horario general
+  const slots = shifts.length > 0
+    ? generateSlotsFromShifts(shifts, duration)
+    : generateSlots(opening, closing, duration);
 
   const { data: tables } = await getSupabase()
     .from('tables')
@@ -56,7 +87,6 @@ async function getAvailability(restaurantId, date, guests) {
 
   if (!tables || tables.length === 0) return [];
 
-  const slots = generateSlots(opening, closing, duration);
   const available = [];
 
   for (const slot of slots) {
