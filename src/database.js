@@ -29,7 +29,7 @@ const WEEKDAY_NAMES = ['sunday','monday','tuesday','wednesday','thursday','frida
 
 function isRestaurantOpenOnDate(config, dateISO) {
   const openDays = config?.open_days;
-  if (!openDays || openDays.length === 0) return true; // si no hay config, abierto siempre
+  if (!openDays || openDays.length === 0) return true;
   const dayOfWeek = new Date(dateISO + 'T12:00:00').getDay();
   const dayName = WEEKDAY_NAMES[dayOfWeek];
   return openDays.includes(dayName);
@@ -62,7 +62,6 @@ function generateSlotsFromShifts(shifts, slotDuration) {
 async function getAvailability(restaurantId, date, guests) {
   const config = await getRestaurantConfig(restaurantId);
 
-  // Comprobar si el restaurante abre ese día
   if (!isRestaurantOpenOnDate(config, date)) {
     return { closed: true, message: 'El restaurante no abre ese día' };
   }
@@ -72,7 +71,6 @@ async function getAvailability(restaurantId, date, guests) {
   const duration = config?.slot_duration || 30;
   const shifts = config?.shifts || [];
 
-  // Generar slots según turnos o horario general
   const slots = shifts.length > 0
     ? generateSlotsFromShifts(shifts, duration)
     : generateSlots(opening, closing, duration);
@@ -236,6 +234,26 @@ async function getConversations(restaurantId) {
   return data || [];
 }
 
+async function getManualMode(restaurantId, phone) {
+  try {
+    const { data } = await getSupabase()
+      .from('manual_mode')
+      .select('active')
+      .eq('restaurant_id', restaurantId)
+      .eq('phone', phone)
+      .maybeSingle();
+    return data?.active || false;
+  } catch(e) {
+    return false;
+  }
+}
+
+async function setManualMode(restaurantId, phone, active) {
+  await getSupabase()
+    .from('manual_mode')
+    .upsert([{ restaurant_id: restaurantId, phone, active }], { onConflict: 'restaurant_id,phone' });
+}
+
 module.exports = {
   getSupabase,
   getRestaurantConfig,
@@ -246,5 +264,7 @@ module.exports = {
   findReservationByName,
   cancelById,
   saveMessage,
-  getConversations
+  getConversations,
+  getManualMode,
+  setManualMode
 };
