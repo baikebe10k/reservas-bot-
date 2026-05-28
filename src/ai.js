@@ -2,7 +2,7 @@ const Anthropic = require('@anthropic-ai/sdk');
 const { getRestaurantConfig, getAvailability, createReservation, cancelByPhone, findReservationByName, cancelById, saveConversationHistory, loadConversationHistory } = require('./database');
 
 const client = new Anthropic();
-const MAX_HISTORY = 20; // límite de mensajes en historial
+const MAX_HISTORY = 10; // solo últimos 10 mensajes texto para velocidad
 
 const tools = [
  {
@@ -61,24 +61,30 @@ function detectLanguage(text) {
  if (/\b(bonjour|merci|réserver|bonsoir)\b/.test(lower)) return 'fr';
  if (/\b(hallo|danke|guten|reservieren)\b/.test(lower)) return 'de';
  if (/\b(hello|hi|thanks|book|reservation|please)\b/.test(lower)) return 'en';
- if (/\b(gràcies|hola|bon dia|bona tarda|taula|reserva|avui|demà|persones)\b/.test(lower)) return 'ca';
+ if (/\b(gràcies|bon dia|bona tarda|taula|avui|demà|persones)\b/.test(lower)) return 'ca';
  return 'es';
 }
 
 async function processMessage(phone, text, platform, restaurantId) {
- // Cargar historial desde Supabase
+ // Cargar historial desde Supabase — solo mensajes texto simples
  const stored = await loadConversationHistory(restaurantId, phone);
- let history = stored.messages || [];
  let currentLanguage = stored.language || 'es';
+
+ // Filtrar solo mensajes user/assistant con content string
+ // Los tool_use y tool_result los descartamos para el historial persistido
+ let history = (stored.messages || []).filter(m =>
+   typeof m.content === 'string' &&
+   (m.role === 'user' || m.role === 'assistant')
+ );
+
+ // Limitar a últimos MAX_HISTORY mensajes
+ if (history.length > MAX_HISTORY) {
+   history = history.slice(history.length - MAX_HISTORY);
+ }
 
  // Detectar idioma solo en el primer mensaje
  if (history.length === 0) {
    currentLanguage = detectLanguage(text);
- }
-
- // Limitar historial a MAX_HISTORY mensajes para velocidad
- if (history.length > MAX_HISTORY) {
-   history = history.slice(history.length - MAX_HISTORY);
  }
 
  history.push({ role: "user", content: text });
@@ -96,7 +102,7 @@ async function processMessage(phone, text, platform, restaurantId) {
    closingTime = '23:00';
  }
 
- // --- FECHA/HORA ESPAÑA FIABLE ---
+ // FECHA/HORA ESPAÑA FIABLE
  const nowMadrid = new Date().toLocaleString('en-US', { timeZone: 'Europe/Madrid' });
  const madridDate = new Date(nowMadrid);
  const pad = n => String(n).padStart(2, '0');
@@ -115,6 +121,9 @@ async function processMessage(phone, text, platform, restaurantId) {
    const label = i === 0 ? ' (HOY)' : i === 1 ? ' (MAÑANA)' : '';
    next7.push(`  - ${wday}${label} → ${iso}`);
  }
+
+ // Historial de trabajo en memoria para esta sesión (incluye tool_use)
+ const workingHistory = [...history];
 
  async function executeTool(name, input) {
    if (name === 'get_availability') {
@@ -151,23 +160,23 @@ REGLAS CRÍTICAS DE FECHAS:
 - "hoy" → ${todayISO}
 - "mañana" → mira la lista y usa la fecha marcada (MAÑANA)
 - "el [día]" o "este [día]" → busca ese día en la lista de arriba (el más próximo)
-- "el [día] que viene" o "[día] de la semana que viene" → busca ese día en la lista pero de la SEMANA SIGUIENTE (el que aparece más abajo)
-- "dentro de una hora" / "ahora" / "en un momento" → fecha ${todayISO}, hora ${nextHour}
-- Formato numérico "3/6", "3/06", "3/06/2026", "3 de junio" → convierte a YYYY-MM-DD usando año ${madridDate.getFullYear()} (si el mes ya pasó, usa ${madridDate.getFullYear()+1})
-- NUNCA inventes ni calcules fechas tú solo. USA SIEMPRE la lista de arriba o convierte el formato numérico.
+- "el [día] que viene" o "[día] de la semana que viene" → busca ese día en la lista pero de la SEMANA SIGUIENTE
+- "dentro de una hora" / "ahora" → fecha ${todayISO}, hora ${nextHour}
+- Formato numérico "3/6", "3/06", "3/06/2026", "3 de junio" → convierte a YYYY-MM-DD usando año ${madridDate.getFullYear()}
+- NUNCA inventes ni calcules fechas tú solo. USA SIEMPRE la lista de arriba.
 
 Horario del restaurante: ${openingTime} a ${closingTime}.
 
 REGLAS:
-1. Cuando el cliente escriba por primera vez, salúdale con una bienvenida cálida según su idioma. Español: "¡Hola! Bienvenido/a a ${restaurantName} 😊 ¿En qué te puedo ayudar?" / Catalán: "Hola! Benvingut/da a ${restaurantName} 😊 En què et puc ajudar?" / Inglés: "Hi! Welcome to ${restaurantName} 😊 How can I help you?" / Francés: "Bonjour! Bienvenue au ${restaurantName} 😊 Comment puis-je vous aider?" / Alemán: "Hallo! Willkommen bei ${restaurantName} 😊 Wie kann ich Ihnen helfen?" Detecta el idioma del cliente. NUNCA listes opciones en el saludo.
+1. Cuando el cliente escriba por primera vez, salúdale con una bienvenida cálida según su idioma. Español: "¡Hola! Bienvenido/a a ${restaurantName} 😊 ¿En qué te puedo ayudar?" / Catalán: "Hola! Benvingut/da a ${restaurantName} 😊 En què et puc ajudar?" / Inglés: "Hi! Welcome to ${restaurantName} 😊 How can I help you?" / Francés: "Bonjour! Bienvenue au ${restaurantName} 😊 Comment puis-je vous aider?" / Alemán: "Hallo! Willkommen bei ${restaurantName} 😊 Wie kann ich Ihnen helfen?"
 2. Para ver disponibilidad SIEMPRE llama a get_availability PRIMERO antes de responder.
 3. Para crear una reserva SIEMPRE llama a create_reservation. PROHIBIDO confirmar sin llamar al tool.
-4. Para cancelar: PRIMERO llama a find_reservation_by_name con el nombre del cliente. Muestra los datos encontrados de forma cordial: "He encontrado la siguiente reserva a su nombre: [fecha] a las [hora] para [personas] personas. ¿Podría confirmarme que es esta su reserva?" Si confirma, llama a cancel_reservation con el ID. Si hay varias reservas, muéstralas todas y pregunta cuál desea cancelar.
+4. Para cancelar: PRIMERO llama a find_reservation_by_name. Muestra los datos y confirma con el cliente antes de cancelar.
 5. Necesitas: fecha, hora, personas, nombre completo y teléfono antes de crear reserva.
-6. Responde SIEMPRE en el idioma del cliente. Detecta el idioma en su PRIMER mensaje y mantén ESE idioma en TODA la conversación sin mezclarlo. Si escribe en catalán, responde 100% en catalán. Si escribe en español, responde 100% en español. NUNCA mezcles idiomas en una misma respuesta.
-7. Sé conciso y natural, como un humano. Sin listas innecesarias.
-8. Si no hay disponibilidad para una hora/fecha, SIEMPRE ofrece alternativas: otras horas ese mismo día o los próximos 2-3 días. Llama a get_availability para cada alternativa antes de sugerirla.
-9. Cuando confirmes una reserva usa este formato exacto adaptado al idioma del cliente:
+6. Responde SIEMPRE en el idioma del cliente. NUNCA mezcles idiomas.
+7. Sé conciso y natural como un humano. NUNCA uses listas con bullets ni numeradas. Escribe en texto corrido como por WhatsApp. No des ejemplos innecesarios entre paréntesis.
+8. Si no hay disponibilidad SIEMPRE ofrece alternativas llamando a get_availability para cada opción.
+9. Cuando confirmes una reserva usa este formato:
 ✅ Reserva confirmada en ${restaurantName}
 
 Hola [nombre] 😊
@@ -183,8 +192,6 @@ Alemán: "Wir freuen uns auf Sie! Falls Sie etwas ändern möchten, antworten Si
 
  try {
    let continueLoop = true;
-
-   // Timeout de 25 segundos para evitar que Railway corte la conexión
    const timeout = new Promise((_, reject) =>
      setTimeout(() => reject(new Error('Timeout')), 25000)
    );
@@ -195,7 +202,7 @@ Alemán: "Wir freuen uns auf Sie! Falls Sie etwas ändern möchten, antworten Si
          model: "claude-haiku-4-5-20251001",
          max_tokens: 1024,
          system: SYSTEM_PROMPT,
-         messages: history,
+         messages: workingHistory,
          tools: tools,
          tool_choice: { type: "auto" }
        }),
@@ -203,7 +210,7 @@ Alemán: "Wir freuen uns auf Sie! Falls Sie etwas ändern möchten, antworten Si
      ]);
 
      if (response.stop_reason === 'tool_use') {
-       history.push({ role: "assistant", content: response.content });
+       workingHistory.push({ role: "assistant", content: response.content });
        const toolResults = [];
        for (const block of response.content) {
          if (block.type !== 'tool_use') continue;
@@ -218,12 +225,12 @@ Alemán: "Wir freuen uns auf Sie! Falls Sie etwas ändern möchten, antworten Si
          }
          toolResults.push({ type: "tool_result", tool_use_id: block.id, content: JSON.stringify(result) });
        }
-       history.push({ role: "user", content: toolResults });
+       workingHistory.push({ role: "user", content: toolResults });
      } else {
        const finalText = response.content.find(c => c.type === 'text')?.text || 'Lo siento, hubo un error.';
-       history.push({ role: "assistant", content: finalText });
 
-       // Guardar historial en Supabase
+       // Guardar solo mensajes texto en Supabase (sin tool_use)
+       history.push({ role: "assistant", content: finalText });
        await saveConversationHistory(restaurantId, phone, history, currentLanguage);
 
        continueLoop = false;
@@ -232,10 +239,6 @@ Alemán: "Wir freuen uns auf Sie! Falls Sie etwas ändern möchten, antworten Si
    }
  } catch (err) {
    console.error(`[${new Date().toISOString()}] Error:`, err.message);
-
-   // Guardar historial aunque haya error
-   await saveConversationHistory(restaurantId, phone, history, currentLanguage);
-
    if (err.message === 'Timeout') {
      return 'Tardamos un poco más de lo normal. Por favor inténtalo de nuevo en un momento 🙏';
    }
