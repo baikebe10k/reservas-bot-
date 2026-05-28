@@ -21,7 +21,6 @@ async function getRestaurantByPhone(whatsappNumber) {
 }
 
 async function getRestaurantConfig(restaurantId) {
- // Usar cache si está disponible
  const cached = configCache.get(restaurantId);
  if (cached && Date.now() - cached.ts < CACHE_TTL) {
    return cached.data;
@@ -85,6 +84,7 @@ async function getAvailability(restaurantId, date, guests) {
    ? generateSlotsFromShifts(shifts, duration)
    : generateSlots(opening, closing, duration);
 
+ // UNA SOLA QUERY para mesas disponibles
  const { data: tables } = await getSupabase()
    .from('tables')
    .select('*')
@@ -95,21 +95,29 @@ async function getAvailability(restaurantId, date, guests) {
 
  if (!tables || tables.length === 0) return [];
 
+ // UNA SOLA QUERY para todas las reservas del día
+ const { data: existingReservations } = await getSupabase()
+   .from('reservations')
+   .select('table_id, time')
+   .eq('restaurant_id', restaurantId)
+   .eq('date', date)
+   .eq('status', 'confirmed');
+
+ // Mapa de slots ocupados en memoria
+ const bookedMap = {};
+ (existingReservations || []).forEach(r => {
+   if (!bookedMap[r.time]) bookedMap[r.time] = new Set();
+   bookedMap[r.time].add(r.table_id);
+ });
+
+ // Calcular disponibilidad en memoria sin más queries
  const available = [];
-
  for (const slot of slots) {
-   const { data: existing } = await getSupabase()
-     .from('reservations')
-     .select('table_id')
-     .eq('restaurant_id', restaurantId)
-     .eq('date', date)
-     .eq('time', slot)
-     .eq('status', 'confirmed');
-
-   const bookedTableIds = (existing || []).map(r => r.table_id);
-   const freeTable = tables.find(t => !bookedTableIds.includes(t.id));
+   const bookedTableIds = bookedMap[slot] || new Set();
+   const freeTable = tables.find(t => !bookedTableIds.has(t.id));
    if (freeTable) available.push(slot);
  }
+
  return available;
 }
 
@@ -153,7 +161,8 @@ async function createReservation(restaurantId, data) {
    time: data.time,
    end_time: endDateTime.toISOString(),
    guests: data.guests,
-   status: 'confirmed'
+   status: 'confirmed',
+   language: data.language || 'es'
  };
 
  console.log('Insertando:', insertData);
@@ -264,6 +273,38 @@ async function setManualMode(restaurantId, phone, active) {
    .upsert([{ restaurant_id: restaurantId, phone, active }], { onConflict: 'restaurant_id,phone' });
 }
 
+// Guardar historial conversación en Supabase
+async function saveConversationHistory(restaurantId, phone, messages, language) {
+ try {
+   await getSupabase()
+     .from('conversation_history')
+     .upsert([{
+       restaurant_id: restaurantId,
+       customer_phone: phone,
+       messages: messages,
+       language: language || 'es',
+       updated_at: new Date().toISOString()
+     }], { onConflict: 'restaurant_id,customer_phone' });
+ } catch(e) {
+   console.error('[saveConversationHistory error]', e.message);
+ }
+}
+
+// Cargar historial conversación desde Supabase
+async function loadConversationHistory(restaurantId, phone) {
+ try {
+   const { data } = await getSupabase()
+     .from('conversation_history')
+     .select('messages, language')
+     .eq('restaurant_id', restaurantId)
+     .eq('customer_phone', phone)
+     .maybeSingle();
+   return data || { messages: [], language: 'es' };
+ } catch(e) {
+   return { messages: [], language: 'es' };
+ }
+}
+
 module.exports = {
  getSupabase,
  getRestaurantConfig,
@@ -276,5 +317,7 @@ module.exports = {
  saveMessage,
  getConversations,
  getManualMode,
- setManualMode
+ setManualMode,
+ saveConversationHistory,
+ loadConversationHistory
 };
