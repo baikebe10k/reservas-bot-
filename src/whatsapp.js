@@ -11,6 +11,37 @@ function normalizePhone(phone) {
  return '+' + clean;
 }
 
+async function sendWhatsAppMessage(phone, message) {
+ const clean = (message || '')
+   .replace(/\*\*/g, '')
+   .replace(/\*/g, '')
+   .replace(/#{1,6} /g, '')
+   .replace(/&/g, 'y')
+   .replace(/</g, '')
+   .replace(/>/g, '');
+
+ const response = await fetch(`https://graph.facebook.com/v19.0/${process.env.META_PHONE_NUMBER_ID}/messages`, {
+   method: 'POST',
+   headers: {
+     'Authorization': `Bearer ${process.env.META_TOKEN}`,
+     'Content-Type': 'application/json'
+   },
+   body: JSON.stringify({
+     messaging_product: 'whatsapp',
+     to: phone,
+     type: 'text',
+     text: { body: clean }
+   })
+ });
+
+ if (!response.ok) {
+   const err = await response.text();
+   throw new Error(`Meta API error: ${err}`);
+ }
+
+ return response.json();
+}
+
 async function handleWhatsAppMessage(req, res) {
  try {
    res.writeHead(200);
@@ -21,8 +52,43 @@ async function handleWhatsAppMessage(req, res) {
    const message = change?.value?.messages?.[0];
    const metadata = change?.value?.metadata;
 
-   if (!message || message.type !== 'text') return;
+   if (!message) return;
 
+   // Gestionar audios, imágenes y otros tipos
+   if (message.type !== 'text') {
+     const responses = {
+       audio: 'No puedo escuchar mensajes de voz 😊 Por favor escríbeme tu consulta y te respondo enseguida.',
+       image: 'No puedo ver imágenes 😊 Por favor escríbeme tu consulta y te respondo enseguida.',
+       video: 'No puedo ver vídeos 😊 Por favor escríbeme tu consulta y te respondo enseguida.',
+       document: 'No puedo abrir documentos 😊 Por favor escríbeme tu consulta y te respondo enseguida.',
+       sticker: null, // ignorar stickers silenciosamente
+     };
+
+     const reply = responses[message.type];
+     if (!reply) return;
+
+     const from = normalizePhone(message.from);
+     const displayPhoneNumber = normalizePhone(metadata?.display_phone_number || '');
+     const restaurant = await getRestaurantByPhone(displayPhoneNumber);
+     if (!restaurant) return;
+
+     await fetch(`https://graph.facebook.com/v19.0/${process.env.META_PHONE_NUMBER_ID}/messages`, {
+       method: 'POST',
+       headers: {
+         'Authorization': `Bearer ${process.env.META_TOKEN}`,
+         'Content-Type': 'application/json'
+       },
+       body: JSON.stringify({
+         messaging_product: 'whatsapp',
+         to: from,
+         type: 'text',
+         text: { body: reply }
+       })
+     });
+     return;
+   }
+
+   // Deduplicar mensajes
    const messageId = message.id;
    if (processedMessages.has(messageId)) {
      console.log('Mensaje duplicado ignorado:', messageId);
@@ -33,7 +99,6 @@ async function handleWhatsAppMessage(req, res) {
 
    const from = normalizePhone(message.from);
    const text = message.text.body;
-   const toNumber = '+' + metadata?.phone_number_id;
 
    console.log(`[${new Date().toISOString()}] Mensaje recibido de ${from}: ${text}`);
 
@@ -50,7 +115,7 @@ async function handleWhatsAppMessage(req, res) {
 
    await saveMessage(restaurantId, from, null, 'inbound', text);
 
-   // Si está en modo manual, el bot no responde
+   // Si está en modo manual el bot no responde
    const { getManualMode } = require('./database');
    const isManual = await getManualMode(restaurantId, from);
    if (isManual) {
@@ -91,37 +156,6 @@ async function handleWhatsAppMessage(req, res) {
  } catch (err) {
    console.error(`[${new Date().toISOString()}] Error Meta webhook:`, err.stack || err.message);
  }
-}
-
-async function sendWhatsAppMessage(phone, message) {
- const clean = (message || '')
-   .replace(/\*\*/g, '')
-   .replace(/\*/g, '')
-   .replace(/#{1,6} /g, '')
-   .replace(/&/g, 'y')
-   .replace(/</g, '')
-   .replace(/>/g, '');
-
- const response = await fetch(`https://graph.facebook.com/v19.0/${process.env.META_PHONE_NUMBER_ID}/messages`, {
-   method: 'POST',
-   headers: {
-     'Authorization': `Bearer ${process.env.META_TOKEN}`,
-     'Content-Type': 'application/json'
-   },
-   body: JSON.stringify({
-     messaging_product: 'whatsapp',
-     to: phone,
-     type: 'text',
-     text: { body: clean }
-   })
- });
-
- if (!response.ok) {
-   const err = await response.text();
-   throw new Error(`Meta API error: ${err}`);
- }
-
- return response.json();
 }
 
 module.exports = { handleWhatsAppMessage, sendWhatsAppMessage };
