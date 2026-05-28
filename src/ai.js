@@ -3,6 +3,7 @@ const { getRestaurantConfig, getAvailability, createReservation, cancelByPhone, 
 
 const client = new Anthropic();
 const conversations = new Map();
+const languageMap = new Map(); // guarda idioma por conversación
 
 const tools = [
   {
@@ -56,12 +57,29 @@ const tools = [
   }
 ];
 
+function detectLanguage(text) {
+  const lower = text.toLowerCase();
+  if (/\b(bonjour|merci|réserver|bonsoir)\b/.test(lower)) return 'fr';
+  if (/\b(hallo|danke|guten|reservieren)\b/.test(lower)) return 'de';
+  if (/\b(hello|hi|thanks|book|reservation|please)\b/.test(lower)) return 'en';
+  if (/\b(gràcies|hola|bon dia|bona tarda|taula|reserva|avui|demà|persones)\b/.test(lower)) return 'ca';
+  return 'es';
+}
+
 async function processMessage(phone, text, platform, restaurantId) {
   const convKey = `${restaurantId}:${phone}`;
   if (!conversations.has(convKey)) {
     conversations.set(convKey, []);
   }
   const history = conversations.get(convKey);
+
+  // Detectar idioma en el primer mensaje
+  if (history.length === 0) {
+    const detected = detectLanguage(text);
+    languageMap.set(convKey, detected);
+  }
+  const currentLanguage = languageMap.get(convKey) || 'es';
+
   history.push({ role: "user", content: text });
 
   let config, restaurantName, openingTime, closingTime;
@@ -101,7 +119,7 @@ async function processMessage(phone, text, platform, restaurantId) {
     if (name === 'get_availability') {
       return await getAvailability(restaurantId, input.date, input.guests);
     } else if (name === 'create_reservation') {
-      const result = await createReservation(restaurantId, input);
+      const result = await createReservation(restaurantId, { ...input, language: currentLanguage });
       if (result && !result.error) {
         result._confirmation = {
           name: input.customer_name,
