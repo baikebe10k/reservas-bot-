@@ -1,6 +1,7 @@
 const http = require('http');
 const crypto = require('crypto');
 const { handleWhatsAppMessage } = require('./whatsapp');
+require('./reminder');
 require('dotenv').config();
 
 const PORT = process.env.PORT || 3000;
@@ -52,7 +53,7 @@ const server = http.createServer(async (req, res) => {
   const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress || '';
 
   // CORS headers para todas las respuestas
-  res.setHeader('Access-Control-Allow-Origin', 'https://app.reserviasolutions.com');
+  res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, GET, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-panel-token');
 
