@@ -1,143 +1,144 @@
 const Anthropic = require('@anthropic-ai/sdk');
-const { getRestaurantConfig, getAvailability, createReservation, cancelByPhone, findReservationByName, cancelById } = require('./database');
+const { getRestaurantConfig, getAvailability, createReservation, cancelByPhone, findReservationByName, cancelById, saveConversationHistory, loadConversationHistory } = require('./database');
 
 const client = new Anthropic();
-const conversations = new Map();
-const languageMap = new Map(); // guarda idioma por conversación
+const MAX_HISTORY = 20; // límite de mensajes en historial
 
 const tools = [
-  {
-    name: "get_availability",
-    description: "Obtiene horarios disponibles para una fecha",
-    input_schema: {
-      type: "object",
-      properties: {
-        date: { type: "string", description: "Fecha en formato YYYY-MM-DD" },
-        guests: { type: "number", description: "Numero de personas" }
-      },
-      required: ["date", "guests"]
-    }
-  },
-  {
-    name: "create_reservation",
-    description: "Crea una reserva en la base de datos. OBLIGATORIO llamar antes de confirmar.",
-    input_schema: {
-      type: "object",
-      properties: {
-        date: { type: "string" },
-        time: { type: "string" },
-        guests: { type: "number" },
-        customer_name: { type: "string" },
-        customer_phone: { type: "string" }
-      },
-      required: ["date", "time", "guests", "customer_name", "customer_phone"]
-    }
-  },
-  {
-    name: "find_reservation_by_name",
-    description: "Busca reservas confirmadas por nombre del cliente",
-    input_schema: {
-      type: "object",
-      properties: {
-        name: { type: "string", description: "Nombre o parte del nombre del cliente" }
-      },
-      required: ["name"]
-    }
-  },
-  {
-    name: "cancel_reservation",
-    description: "Cancela una reserva por su ID. Usar solo tras confirmar con el cliente.",
-    input_schema: {
-      type: "object",
-      properties: {
-        reservation_id: { type: "string", description: "ID de la reserva a cancelar" }
-      },
-      required: ["reservation_id"]
-    }
-  }
+ {
+   name: "get_availability",
+   description: "Obtiene horarios disponibles para una fecha",
+   input_schema: {
+     type: "object",
+     properties: {
+       date: { type: "string", description: "Fecha en formato YYYY-MM-DD" },
+       guests: { type: "number", description: "Numero de personas" }
+     },
+     required: ["date", "guests"]
+   }
+ },
+ {
+   name: "create_reservation",
+   description: "Crea una reserva en la base de datos. OBLIGATORIO llamar antes de confirmar.",
+   input_schema: {
+     type: "object",
+     properties: {
+       date: { type: "string" },
+       time: { type: "string" },
+       guests: { type: "number" },
+       customer_name: { type: "string" },
+       customer_phone: { type: "string" }
+     },
+     required: ["date", "time", "guests", "customer_name", "customer_phone"]
+   }
+ },
+ {
+   name: "find_reservation_by_name",
+   description: "Busca reservas confirmadas por nombre del cliente",
+   input_schema: {
+     type: "object",
+     properties: {
+       name: { type: "string", description: "Nombre o parte del nombre del cliente" }
+     },
+     required: ["name"]
+   }
+ },
+ {
+   name: "cancel_reservation",
+   description: "Cancela una reserva por su ID. Usar solo tras confirmar con el cliente.",
+   input_schema: {
+     type: "object",
+     properties: {
+       reservation_id: { type: "string", description: "ID de la reserva a cancelar" }
+     },
+     required: ["reservation_id"]
+   }
+ }
 ];
 
 function detectLanguage(text) {
-  const lower = text.toLowerCase();
-  if (/\b(bonjour|merci|réserver|bonsoir)\b/.test(lower)) return 'fr';
-  if (/\b(hallo|danke|guten|reservieren)\b/.test(lower)) return 'de';
-  if (/\b(hello|hi|thanks|book|reservation|please)\b/.test(lower)) return 'en';
-  if (/\b(gràcies|hola|bon dia|bona tarda|taula|reserva|avui|demà|persones)\b/.test(lower)) return 'ca';
-  return 'es';
+ const lower = text.toLowerCase();
+ if (/\b(bonjour|merci|réserver|bonsoir)\b/.test(lower)) return 'fr';
+ if (/\b(hallo|danke|guten|reservieren)\b/.test(lower)) return 'de';
+ if (/\b(hello|hi|thanks|book|reservation|please)\b/.test(lower)) return 'en';
+ if (/\b(gràcies|hola|bon dia|bona tarda|taula|reserva|avui|demà|persones)\b/.test(lower)) return 'ca';
+ return 'es';
 }
 
 async function processMessage(phone, text, platform, restaurantId) {
-  const convKey = `${restaurantId}:${phone}`;
-  if (!conversations.has(convKey)) {
-    conversations.set(convKey, []);
-  }
-  const history = conversations.get(convKey);
+ // Cargar historial desde Supabase
+ const stored = await loadConversationHistory(restaurantId, phone);
+ let history = stored.messages || [];
+ let currentLanguage = stored.language || 'es';
 
-  // Detectar idioma en el primer mensaje
-  if (history.length === 0) {
-    const detected = detectLanguage(text);
-    languageMap.set(convKey, detected);
-  }
-  const currentLanguage = languageMap.get(convKey) || 'es';
+ // Detectar idioma solo en el primer mensaje
+ if (history.length === 0) {
+   currentLanguage = detectLanguage(text);
+ }
 
-  history.push({ role: "user", content: text });
+ // Limitar historial a MAX_HISTORY mensajes para velocidad
+ if (history.length > MAX_HISTORY) {
+   history = history.slice(history.length - MAX_HISTORY);
+ }
 
-  let config, restaurantName, openingTime, closingTime;
-  try {
-    config = await getRestaurantConfig(restaurantId);
-    restaurantName = config?.name || 'Restaurante';
-    openingTime = config?.opening_time || '13:00';
-    closingTime = config?.closing_time || '23:00';
-  } catch (e) {
-    console.error('[Config error]', e.message);
-    restaurantName = 'Restaurante';
-    openingTime = '13:00';
-    closingTime = '23:00';
-  }
+ history.push({ role: "user", content: text });
 
-  // --- FECHA/HORA ESPAÑA FIABLE ---
-  const nowMadrid = new Date().toLocaleString('en-US', { timeZone: 'Europe/Madrid' });
-  const madridDate = new Date(nowMadrid);
-  const pad = n => String(n).padStart(2, '0');
-  const todayISO = `${madridDate.getFullYear()}-${pad(madridDate.getMonth()+1)}-${pad(madridDate.getDate())}`;
-  const currentHour = `${pad(madridDate.getHours())}:${pad(madridDate.getMinutes())}`;
-  const nextHour = `${pad(madridDate.getHours()+1)}:00`;
-  const weekdayNames = ['domingo','lunes','martes','miércoles','jueves','viernes','sábado'];
-  const weekdayNum = madridDate.getDay();
+ let config, restaurantName, openingTime, closingTime;
+ try {
+   config = await getRestaurantConfig(restaurantId);
+   restaurantName = config?.name || 'Restaurante';
+   openingTime = config?.opening_time || '13:00';
+   closingTime = config?.closing_time || '23:00';
+ } catch (e) {
+   console.error('[Config error]', e.message);
+   restaurantName = 'Restaurante';
+   openingTime = '13:00';
+   closingTime = '23:00';
+ }
 
-  const next7 = [];
-  for (let i = 0; i <= 7; i++) {
-    const d = new Date(madridDate);
-    d.setDate(madridDate.getDate() + i);
-    const iso = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
-    const wday = weekdayNames[d.getDay()];
-    const label = i === 0 ? ' (HOY)' : i === 1 ? ' (MAÑANA)' : '';
-    next7.push(`  - ${wday}${label} → ${iso}`);
-  }
+ // --- FECHA/HORA ESPAÑA FIABLE ---
+ const nowMadrid = new Date().toLocaleString('en-US', { timeZone: 'Europe/Madrid' });
+ const madridDate = new Date(nowMadrid);
+ const pad = n => String(n).padStart(2, '0');
+ const todayISO = `${madridDate.getFullYear()}-${pad(madridDate.getMonth()+1)}-${pad(madridDate.getDate())}`;
+ const currentHour = `${pad(madridDate.getHours())}:${pad(madridDate.getMinutes())}`;
+ const nextHour = `${pad(madridDate.getHours()+1)}:00`;
+ const weekdayNames = ['domingo','lunes','martes','miércoles','jueves','viernes','sábado'];
+ const weekdayNum = madridDate.getDay();
 
-  async function executeTool(name, input) {
-    if (name === 'get_availability') {
-      return await getAvailability(restaurantId, input.date, input.guests);
-    } else if (name === 'create_reservation') {
-      const result = await createReservation(restaurantId, { ...input, language: currentLanguage });
-      if (result && !result.error) {
-        result._confirmation = {
-          name: input.customer_name,
-          date: input.date,
-          time: input.time,
-          guests: input.guests
-        };
-      }
-      return result;
-    } else if (name === 'find_reservation_by_name') {
-      return await findReservationByName(restaurantId, input.name);
-    } else if (name === 'cancel_reservation') {
-      return await cancelById(input.reservation_id);
-    }
-    return { error: 'Tool desconocido' };
-  }
+ const next7 = [];
+ for (let i = 0; i <= 7; i++) {
+   const d = new Date(madridDate);
+   d.setDate(madridDate.getDate() + i);
+   const iso = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+   const wday = weekdayNames[d.getDay()];
+   const label = i === 0 ? ' (HOY)' : i === 1 ? ' (MAÑANA)' : '';
+   next7.push(`  - ${wday}${label} → ${iso}`);
+ }
 
-  const SYSTEM_PROMPT = `Eres el asistente de reservas de ${restaurantName}. Respondes por WhatsApp de forma natural y amable.
+ async function executeTool(name, input) {
+   if (name === 'get_availability') {
+     return await getAvailability(restaurantId, input.date, input.guests);
+   } else if (name === 'create_reservation') {
+     const result = await createReservation(restaurantId, { ...input, language: currentLanguage });
+     if (result && !result.error) {
+       result._confirmation = {
+         name: input.customer_name,
+         date: input.date,
+         time: input.time,
+         guests: input.guests
+       };
+     }
+     return result;
+   } else if (name === 'find_reservation_by_name') {
+     return await findReservationByName(restaurantId, input.name);
+   } else if (name === 'cancel_reservation') {
+     return await cancelById(input.reservation_id);
+   }
+   return { error: 'Tool desconocido' };
+ }
+
+ const SYSTEM_PROMPT = `Eres el asistente de reservas de ${restaurantName}. Respondes por WhatsApp de forma natural y amable.
 
 FECHA Y HORA ACTUAL EN ESPAÑA:
 - Fecha de hoy: ${todayISO} (${weekdayNames[weekdayNum]})
@@ -180,49 +181,66 @@ Inglés: "We look forward to seeing you! If you need to change anything, reply h
 Francés: "Nous vous attendons! Si vous avez besoin de modifier quoi que ce soit, répondez ici."
 Alemán: "Wir freuen uns auf Sie! Falls Sie etwas ändern möchten, antworten Sie hier."`;
 
-  try {
-    let continueLoop = true;
+ try {
+   let continueLoop = true;
 
-    while (continueLoop) {
-      const response = await client.messages.create({
-        model: "claude-haiku-4-5-20251001",
-        max_tokens: 1024,
-        system: SYSTEM_PROMPT,
-        messages: history,
-        tools: tools,
-        tool_choice: { type: "auto" }
-      });
+   // Timeout de 25 segundos para evitar que Railway corte la conexión
+   const timeout = new Promise((_, reject) =>
+     setTimeout(() => reject(new Error('Timeout')), 25000)
+   );
 
-      if (response.stop_reason === 'tool_use') {
-        history.push({ role: "assistant", content: response.content });
-        const toolResults = [];
-        for (const block of response.content) {
-          if (block.type !== 'tool_use') continue;
-          console.log(`[Tool llamado] ${block.name}`, JSON.stringify(block.input));
-          let result;
-          try {
-            result = await executeTool(block.name, block.input);
-            console.log(`[Tool resultado] ${block.name}`, JSON.stringify(result));
-          } catch (e) {
-            console.error(`[Tool error] ${block.name}`, e.message);
-            result = { error: e.message };
-          }
-          toolResults.push({ type: "tool_result", tool_use_id: block.id, content: JSON.stringify(result) });
-        }
-        history.push({ role: "user", content: toolResults });
-      } else {
-        const finalText = response.content.find(c => c.type === 'text')?.text || 'Lo siento, hubo un error.';
-        history.push({ role: "assistant", content: finalText });
-        conversations.set(convKey, history);
-        continueLoop = false;
-        return finalText;
-      }
-    }
-  } catch (err) {
-    console.error(`[${new Date().toISOString()}] Error Anthropic:`, err.message);
-    conversations.set(convKey, history);
-    return 'Ahora mismo tenemos un pequeño problema técnico. Por favor, inténtalo de nuevo en un momento o llámanos directamente. Disculpa las molestias 🙏';
-  }
+   while (continueLoop) {
+     const response = await Promise.race([
+       client.messages.create({
+         model: "claude-haiku-4-5-20251001",
+         max_tokens: 1024,
+         system: SYSTEM_PROMPT,
+         messages: history,
+         tools: tools,
+         tool_choice: { type: "auto" }
+       }),
+       timeout
+     ]);
+
+     if (response.stop_reason === 'tool_use') {
+       history.push({ role: "assistant", content: response.content });
+       const toolResults = [];
+       for (const block of response.content) {
+         if (block.type !== 'tool_use') continue;
+         console.log(`[Tool llamado] ${block.name}`, JSON.stringify(block.input));
+         let result;
+         try {
+           result = await executeTool(block.name, block.input);
+           console.log(`[Tool resultado] ${block.name}`, JSON.stringify(result));
+         } catch (e) {
+           console.error(`[Tool error] ${block.name}`, e.message);
+           result = { error: e.message };
+         }
+         toolResults.push({ type: "tool_result", tool_use_id: block.id, content: JSON.stringify(result) });
+       }
+       history.push({ role: "user", content: toolResults });
+     } else {
+       const finalText = response.content.find(c => c.type === 'text')?.text || 'Lo siento, hubo un error.';
+       history.push({ role: "assistant", content: finalText });
+
+       // Guardar historial en Supabase
+       await saveConversationHistory(restaurantId, phone, history, currentLanguage);
+
+       continueLoop = false;
+       return finalText;
+     }
+   }
+ } catch (err) {
+   console.error(`[${new Date().toISOString()}] Error:`, err.message);
+
+   // Guardar historial aunque haya error
+   await saveConversationHistory(restaurantId, phone, history, currentLanguage);
+
+   if (err.message === 'Timeout') {
+     return 'Tardamos un poco más de lo normal. Por favor inténtalo de nuevo en un momento 🙏';
+   }
+   return 'Ahora mismo tenemos un pequeño problema técnico. Por favor, inténtalo de nuevo en un momento o llámanos directamente. Disculpa las molestias 🙏';
+ }
 }
 
 module.exports = { processMessage };
