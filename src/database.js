@@ -64,6 +64,14 @@ function getMaxCapacity(table, advConfig) {
   return advConfig[key] || table.capacity + 1;
 }
 
+function isToday(dateISO) {
+  const now = new Date().toLocaleString('en-US', { timeZone: 'Europe/Madrid' });
+  const madridNow = new Date(now);
+  const pad = n => String(n).padStart(2, '0');
+  const todayISO = `${madridNow.getFullYear()}-${pad(madridNow.getMonth()+1)}-${pad(madridNow.getDate())}`;
+  return dateISO === todayISO;
+}
+
 async function getAvailability(restaurantId, date, guests) {
   const config = await getRestaurantConfig(restaurantId);
   const advConfig = getAdvancedConfig(config);
@@ -81,12 +89,20 @@ async function getAvailability(restaurantId, date, guests) {
     ? generateSlotsFromShifts(shifts, duration)
     : generateSlots(opening, closing, duration);
 
-  const { data: allTables } = await getSupabase()
+  // Para reservas del mismo día, excluir mesas ocupadas/bloqueadas manualmente
+  let tablesQuery = getSupabase()
     .from('tables')
     .select('*')
     .eq('restaurant_id', restaurantId)
-    .eq('active', true)
-    .or('manual_status.is.null,manual_status.eq.available');
+    .eq('active', true);
+
+  if (isToday(date)) {
+    tablesQuery = tablesQuery.or('manual_status.is.null,manual_status.eq.available');
+  } else {
+    tablesQuery = tablesQuery.not('manual_status', 'eq', 'blocked');
+  }
+
+  const { data: allTables } = await tablesQuery;
 
   if (!allTables || allTables.length === 0) return [];
 
@@ -138,12 +154,20 @@ async function createReservation(restaurantId, data) {
 
   console.log('isGroup:', isGroup, 'autoConfirm:', autoConfirm, 'status:', status);
 
-  const { data: allTables } = await getSupabase()
+  // Para reservas del mismo día, excluir mesas ocupadas/bloqueadas manualmente
+  let tablesQuery = getSupabase()
     .from('tables')
     .select('*')
     .eq('restaurant_id', restaurantId)
-    .eq('active', true)
-    .or('manual_status.is.null,manual_status.eq.available');
+    .eq('active', true);
+
+  if (isToday(data.date)) {
+    tablesQuery = tablesQuery.or('manual_status.is.null,manual_status.eq.available');
+  } else {
+    tablesQuery = tablesQuery.not('manual_status', 'eq', 'blocked');
+  }
+
+  const { data: allTables } = await tablesQuery;
 
   if (!allTables || allTables.length === 0) return { error: 'No hay mesas' };
 
@@ -176,6 +200,45 @@ async function createReservation(restaurantId, data) {
     }
     if (totalCap >= data.guests) {
       return await insertReservation(restaurantId, combinedTables[0].id, data, config, status, combinedTables.map(t => t.id));
+    }
+  }
+
+  // 3. Buscar próxima hora disponible
+  const opening = config?.opening_time || '13:00';
+  const closing = config?.closing_time || '23:00';
+  const duration = config?.slot_duration || 30;
+  const shifts = config?.shifts || [];
+  const allSlots = shifts.length > 0
+    ? generateSlotsFromShifts(shifts, duration)
+    : generateSlots(opening, closing, duration);
+
+  const requestedIndex = allSlots.indexOf(data.time);
+  const nextSlots = requestedIndex >= 0 ? allSlots.slice(requestedIndex + 1) : [];
+
+  for (const slot of nextSlots) {
+    const { data: slotExisting } = await getSupabase()
+      .from('reservations')
+      .select('table_id')
+      .eq('restaurant_id', restaurantId)
+      .eq('date', data.date)
+      .eq('time', slot)
+      .in('status', ['confirmed', 'pending']);
+
+    const slotBookedIds = (slotExisting || []).map(r => r.table_id);
+    const slotFreeTables = allTables.filter(t => !slotBookedIds.includes(t.id));
+
+    const slotFreeTable = slotFreeTables.find(t => getMaxCapacity(t, advConfig) >= data.guests);
+    if (slotFreeTable) {
+      return { error: 'no_availability', nextSlot: slot };
+    }
+
+    if (advConfig.autoCombine) {
+      const sorted = [...slotFreeTables].sort((a, b) => b.capacity - a.capacity);
+      let totalCap = 0;
+      for (const t of sorted) { totalCap += getMaxCapacity(t, advConfig); }
+      if (totalCap >= data.guests) {
+        return { error: 'no_availability', nextSlot: slot };
+      }
     }
   }
 
