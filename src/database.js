@@ -56,6 +56,15 @@ function generateSlotsFromShifts(shifts, slotDuration) {
   return slots.sort();
 }
 
+function filterSlotsBeforeClose(slots, closingTime) {
+  const [closeH, closeM] = closingTime.split(':').map(Number);
+  const closeMinutes = closeH * 60 + closeM;
+  return slots.filter(slot => {
+    const [slotH, slotM] = slot.split(':').map(Number);
+    return (slotH * 60 + slotM) <= (closeMinutes - 60);
+  });
+}
+
 function getMaxCapacity(table, advConfig) {
   if (!advConfig.flexEnabled) return table.capacity;
   const key = 'flex_cap_' + table.capacity;
@@ -85,9 +94,12 @@ async function getAvailability(restaurantId, date, guests) {
   const duration = config?.slot_duration || 30;
   const shifts = config?.shifts || [];
 
-  const slots = shifts.length > 0
+  const rawSlots = shifts.length > 0
     ? generateSlotsFromShifts(shifts, duration)
     : generateSlots(opening, closing, duration);
+
+  // Excluir slots a menos de 1h del cierre
+  const slots = filterSlotsBeforeClose(rawSlots, closing);
 
   // Para reservas del mismo día, excluir mesas ocupadas/bloqueadas manualmente
   let tablesQuery = getSupabase()
@@ -124,11 +136,9 @@ async function getAvailability(restaurantId, date, guests) {
     const bookedIds = bookedMap[slot] || new Set();
     const freeTables = allTables.filter(t => !bookedIds.has(t.id));
 
-    // 1. Mesa individual con capacidad suficiente
     const singleTable = freeTables.find(t => getMaxCapacity(t, advConfig) >= guests);
     if (singleTable) { available.push(slot); continue; }
 
-    // 2. Combinación de mesas si autoCombine activado
     if (advConfig.autoCombine) {
       const sorted = [...freeTables].sort((a, b) => b.capacity - a.capacity);
       let totalCap = 0;
@@ -154,6 +164,8 @@ async function createReservation(restaurantId, data) {
 
   console.log('isGroup:', isGroup, 'autoConfirm:', autoConfirm, 'status:', status);
 
+  const closing = config?.closing_time || '23:00';
+
   // Para reservas del mismo día, excluir mesas ocupadas/bloqueadas manualmente
   let tablesQuery = getSupabase()
     .from('tables')
@@ -170,6 +182,15 @@ async function createReservation(restaurantId, data) {
   const { data: allTables } = await tablesQuery;
 
   if (!allTables || allTables.length === 0) return { error: 'No hay mesas' };
+
+  // Verificar que la hora pedida no está a menos de 1h del cierre
+  const [closeH, closeM] = closing.split(':').map(Number);
+  const closeMinutes = closeH * 60 + closeM;
+  const [reqH, reqM] = data.time.split(':').map(Number);
+  const reqMinutes = reqH * 60 + reqM;
+  if (reqMinutes > closeMinutes - 60) {
+    return { error: 'Hora fuera de servicio. El último turno es a las ' + String(Math.floor((closeMinutes - 60) / 60)).padStart(2,'0') + ':' + String((closeMinutes - 60) % 60).padStart(2,'0') };
+  }
 
   const { data: existing } = await getSupabase()
     .from('reservations')
@@ -205,12 +226,12 @@ async function createReservation(restaurantId, data) {
 
   // 3. Buscar próxima hora disponible
   const opening = config?.opening_time || '13:00';
-  const closing = config?.closing_time || '23:00';
   const duration = config?.slot_duration || 30;
   const shifts = config?.shifts || [];
-  const allSlots = shifts.length > 0
+  const rawSlots = shifts.length > 0
     ? generateSlotsFromShifts(shifts, duration)
     : generateSlots(opening, closing, duration);
+  const allSlots = filterSlotsBeforeClose(rawSlots, closing);
 
   const requestedIndex = allSlots.indexOf(data.time);
   const nextSlots = requestedIndex >= 0 ? allSlots.slice(requestedIndex + 1) : [];
@@ -228,17 +249,13 @@ async function createReservation(restaurantId, data) {
     const slotFreeTables = allTables.filter(t => !slotBookedIds.includes(t.id));
 
     const slotFreeTable = slotFreeTables.find(t => getMaxCapacity(t, advConfig) >= data.guests);
-    if (slotFreeTable) {
-      return { error: 'no_availability', nextSlot: slot };
-    }
+    if (slotFreeTable) return { error: 'no_availability', nextSlot: slot };
 
     if (advConfig.autoCombine) {
       const sorted = [...slotFreeTables].sort((a, b) => b.capacity - a.capacity);
       let totalCap = 0;
       for (const t of sorted) { totalCap += getMaxCapacity(t, advConfig); }
-      if (totalCap >= data.guests) {
-        return { error: 'no_availability', nextSlot: slot };
-      }
+      if (totalCap >= data.guests) return { error: 'no_availability', nextSlot: slot };
     }
   }
 
