@@ -56,7 +56,6 @@ function generateSlotsFromShifts(shifts, slotDuration) {
   return slots.sort();
 }
 
-// Calcula capacidad máxima de una mesa según config avanzada
 function getMaxCapacity(table, advConfig) {
   if (!advConfig.flexEnabled) return table.capacity;
   const key = 'flex_cap_' + table.capacity;
@@ -109,13 +108,12 @@ async function getAvailability(restaurantId, date, guests) {
     const bookedIds = bookedMap[slot] || new Set();
     const freeTables = allTables.filter(t => !bookedIds.has(t.id));
 
-    // 1. Mesa individual con capacidad suficiente (incluyendo flex)
+    // 1. Mesa individual con capacidad suficiente
     const singleTable = freeTables.find(t => getMaxCapacity(t, advConfig) >= guests);
     if (singleTable) { available.push(slot); continue; }
 
-    // 2. Combinación de mesas si autoCombine está activado
+    // 2. Combinación de mesas si autoCombine activado
     if (advConfig.autoCombine) {
-      // Ordenar mesas libres: primero las más grandes
       const sorted = [...freeTables].sort((a, b) => b.capacity - a.capacity);
       let totalCap = 0;
       for (const t of sorted) {
@@ -135,8 +133,10 @@ async function createReservation(restaurantId, data) {
   const advConfig = getAdvancedConfig(config);
   const groupMin = advConfig.groupMin || 8;
   const isGroup = data.guests >= groupMin;
-  const autoConfirm = advConfig.autoConfirmGroups !== false;
+  const autoConfirm = advConfig.autoConfirmGroups === true;
   const status = (isGroup && !autoConfirm) ? 'pending' : 'confirmed';
+
+  console.log('isGroup:', isGroup, 'autoConfirm:', autoConfirm, 'status:', status);
 
   const { data: allTables } = await getSupabase()
     .from('tables')
@@ -158,11 +158,10 @@ async function createReservation(restaurantId, data) {
   const bookedIds = (existing || []).map(r => r.table_id);
   const freeTables = allTables.filter(t => !bookedIds.includes(t.id));
 
-  // 1. Mesa individual con capacidad suficiente
+  // 1. Mesa individual
   const freeTable = freeTables.find(t => getMaxCapacity(t, advConfig) >= data.guests);
-
   if (freeTable) {
-    return await insertReservation(restaurantId, freeTable.id, data, config, status);
+    return await insertReservation(restaurantId, freeTable.id, data, config, status, null);
   }
 
   // 2. Combinar mesas si autoCombine activado
@@ -176,9 +175,7 @@ async function createReservation(restaurantId, data) {
       if (totalCap >= data.guests) break;
     }
     if (totalCap >= data.guests) {
-      // Reservar la primera mesa como principal
-      const result = await insertReservation(restaurantId, combinedTables[0].id, data, config, status, combinedTables.map(t => t.id));
-      return result;
+      return await insertReservation(restaurantId, combinedTables[0].id, data, config, status, combinedTables.map(t => t.id));
     }
   }
 
@@ -204,8 +201,11 @@ async function insertReservation(restaurantId, tableId, data, config, status, co
     notes: combinedTableIds ? `Mesas combinadas: ${combinedTableIds.join(', ')}` : (data.notes || null)
   };
 
+  console.log('Insertando:', insertData);
+
   const { data: res, error } = await getSupabase().from('reservations').insert([insertData]).select();
   if (error) { console.log('Error Supabase:', error); return { error: error.message }; }
+  console.log('Guardado:', res);
   return res;
 }
 
