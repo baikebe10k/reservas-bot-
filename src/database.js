@@ -81,12 +81,54 @@ function isToday(dateISO) {
   return dateISO === todayISO;
 }
 
+// Actualiza el status operativo de una mesa en tiempo real
+async function updateTableStatus(tableId, status) {
+  await getSupabase()
+    .from('tables')
+    .update({ status, updated_at: new Date().toISOString() })
+    .eq('id', tableId);
+}
+
+// Devuelve si una mesa está disponible para reservas (considera status operativo)
+function isTableAvailableForReservation(table) {
+  // Si tiene status operativo bloqueante, no está disponible
+  if (table.status === 'occupied') return false;
+  if (table.status === 'blocked') return false;
+  if (table.status === 'cleaning') return false;
+  // manual_status legacy también aplica
+  if (table.manual_status === 'occupied') return false;
+  if (table.manual_status === 'blocked') return false;
+  return true;
+}
+
 async function getAvailability(restaurantId, date, guests) {
   const config = await getRestaurantConfig(restaurantId);
   const advConfig = getAdvancedConfig(config);
 
   if (!isRestaurantOpenOnDate(config, date)) {
     return { closed: true, message: 'El restaurante no abre ese día' };
+  }
+
+  // Cut-off horario mismo día
+  const sameDayCutoff = advConfig.sameDayCutoff;
+  if (isToday(date) && sameDayCutoff?.enabled) {
+    const now = new Date().toLocaleString('en-US', { timeZone: 'Europe/Madrid' });
+    const madridNow = new Date(now);
+    const currentMinutes = madridNow.getHours() * 60 + madridNow.getMinutes();
+    const isGroup = guests >= (advConfig.groupMin || 8);
+
+    if (!sameDayCutoff.groupsOnly && sameDayCutoff.general) {
+      const [ch, cm] = sameDayCutoff.general.split(':').map(Number);
+      if (currentMinutes > ch * 60 + cm) {
+        return { cutoff: true, message: 'No se aceptan más reservas para hoy' };
+      }
+    }
+    if (sameDayCutoff.groupsOnly && isGroup && sameDayCutoff.general) {
+      const [ch, cm] = sameDayCutoff.general.split(':').map(Number);
+      if (currentMinutes > ch * 60 + cm) {
+        return { cutoff: true, message: 'No se aceptan más reservas de grupos para hoy' };
+      }
+    }
   }
 
   const opening = config?.opening_time || '13:00';
@@ -98,25 +140,20 @@ async function getAvailability(restaurantId, date, guests) {
     ? generateSlotsFromShifts(shifts, duration)
     : generateSlots(opening, closing, duration);
 
-  // Excluir slots a menos de 1h del cierre
   const slots = filterSlotsBeforeClose(rawSlots, closing);
 
-  // Para reservas del mismo día, excluir mesas ocupadas/bloqueadas manualmente
-  let tablesQuery = getSupabase()
+  // Para reservas del mismo día: excluir mesas con status operativo bloqueante
+  const { data: allTablesRaw } = await getSupabase()
     .from('tables')
     .select('*')
     .eq('restaurant_id', restaurantId)
     .eq('active', true);
 
-  if (isToday(date)) {
-    tablesQuery = tablesQuery.or('manual_status.is.null,manual_status.eq.available');
-  } else {
-    tablesQuery = tablesQuery.not('manual_status', 'eq', 'blocked');
-  }
+  if (!allTablesRaw || allTablesRaw.length === 0) return [];
 
-  const { data: allTables } = await tablesQuery;
-
-  if (!allTables || allTables.length === 0) return [];
+  const allTables = isToday(date)
+    ? allTablesRaw.filter(t => isTableAvailableForReservation(t))
+    : allTablesRaw.filter(t => t.status !== 'blocked' && t.manual_status !== 'blocked');
 
   const { data: existingReservations } = await getSupabase()
     .from('reservations')
@@ -166,24 +203,41 @@ async function createReservation(restaurantId, data) {
 
   const closing = config?.closing_time || '23:00';
 
-  // Para reservas del mismo día, excluir mesas ocupadas/bloqueadas manualmente
-  let tablesQuery = getSupabase()
+  // Cut-off horario mismo día
+  const sameDayCutoff = advConfig.sameDayCutoff;
+  if (isToday(data.date) && sameDayCutoff?.enabled) {
+    const now = new Date().toLocaleString('en-US', { timeZone: 'Europe/Madrid' });
+    const madridNow = new Date(now);
+    const currentMinutes = madridNow.getHours() * 60 + madridNow.getMinutes();
+
+    if (!sameDayCutoff.groupsOnly && sameDayCutoff.general) {
+      const [ch, cm] = sameDayCutoff.general.split(':').map(Number);
+      if (currentMinutes > ch * 60 + cm) {
+        return { error: 'No se aceptan más reservas para hoy' };
+      }
+    }
+    if (sameDayCutoff.groupsOnly && isGroup && sameDayCutoff.general) {
+      const [ch, cm] = sameDayCutoff.general.split(':').map(Number);
+      if (currentMinutes > ch * 60 + cm) {
+        return { error: 'No se aceptan reservas de grupos para hoy. Llama al restaurante.' };
+      }
+    }
+  }
+
+  // Obtener mesas disponibles
+  const { data: allTablesRaw } = await getSupabase()
     .from('tables')
     .select('*')
     .eq('restaurant_id', restaurantId)
     .eq('active', true);
 
-  if (isToday(data.date)) {
-    tablesQuery = tablesQuery.or('manual_status.is.null,manual_status.eq.available');
-  } else {
-    tablesQuery = tablesQuery.not('manual_status', 'eq', 'blocked');
-  }
+  if (!allTablesRaw || allTablesRaw.length === 0) return { error: 'No hay mesas' };
 
-  const { data: allTables } = await tablesQuery;
+  const allTables = isToday(data.date)
+    ? allTablesRaw.filter(t => isTableAvailableForReservation(t))
+    : allTablesRaw.filter(t => t.status !== 'blocked' && t.manual_status !== 'blocked');
 
-  if (!allTables || allTables.length === 0) return { error: 'No hay mesas' };
-
-  // Verificar que la hora pedida no está a menos de 1h del cierre
+  // Verificar hora no está a menos de 1h del cierre
   const [closeH, closeM] = closing.split(':').map(Number);
   const closeMinutes = closeH * 60 + closeM;
   const [reqH, reqM] = data.time.split(':').map(Number);
@@ -363,6 +417,7 @@ module.exports = {
   getConversations,
   getManualMode,
   setManualMode,
+  updateTableStatus,
   saveConversationHistory,
   loadConversationHistory
 };
